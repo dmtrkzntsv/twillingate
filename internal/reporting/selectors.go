@@ -201,9 +201,13 @@ func (s *Service) selection(ctx context.Context, dashboardID int64, picked map[s
 	return sels, bound, nil
 }
 
+// maxSelectorPicks is the most values one selector takes in a request.
+const maxSelectorPicks = 100
+
 // bindSelection is every one of sels, dashboard dashboardID's, in order,
 // bound to its values in picked (nil, All, when picked has none or an
-// empty list), refusing a name in picked that sels lack: the first of
+// empty list), each selector's values de-duplicated, at most
+// maxSelectorPicks of them, refusing a name in picked that sels lack: the first of
 // them in sorted order, so the refusal is always the same.
 func bindSelection(dashboardID int64, sels []Selector, picked map[string][]string) ([]BoundSelector, error) {
 	for _, n := range slices.Sorted(maps.Keys(picked)) {
@@ -214,7 +218,11 @@ func bindSelection(dashboardID int64, sels []Selector, picked map[string][]strin
 	out := make([]BoundSelector, len(sels))
 	for i, s := range sels {
 		out[i] = BoundSelector{Name: s.Name, Column: s.Column}
-		if v := picked[s.Name]; len(v) > 0 {
+		v := distinct(picked[s.Name])
+		if len(v) > maxSelectorPicks {
+			return nil, store.Refuse(store.ErrInvalid, "selector %s has %d values, at most %d", s.Name, len(v), maxSelectorPicks)
+		}
+		if len(v) > 0 {
 			out[i].Values = v
 		}
 	}
@@ -236,7 +244,9 @@ func selectorFilters(q native.Query, bound []BoundSelector) []native.Filter {
 
 // selectionKey is the part of a widget's cache key its selection makes:
 // for each of bound that the widget follows (followed) and that has
-// values, in bound's order, ":s.<name>=" and the values sorted, as JSON.
+// values, in bound's order, ":s.<name>/<column>=" and the values sorted,
+// as JSON; the column is in it, a dashboard update keeping a name while
+// changing what it filters.
 // "" when there is none, so a widget at All keys as it did before
 // selectors. The "s." cannot read as the project's or range's part, a
 // selector's name having no dot.
@@ -250,8 +260,21 @@ func selectionKey(followed []string, bound []BoundSelector) string {
 		if err != nil { // strings always marshal
 			panic(err)
 		}
-		b.WriteString(":s." + s.Name + "=")
+		b.WriteString(":s." + s.Name + "/" + s.Column + "=")
 		b.Write(vals)
 	}
 	return b.String()
+}
+
+// distinct is v without repeats, in order.
+func distinct(v []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, x := range v {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
 }

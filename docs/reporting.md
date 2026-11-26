@@ -1611,6 +1611,10 @@ never NULL, so write the filter as:
 AND (len(:deployment) = 0 OR list_contains(:deployment, attr_deployment))
 ```
 
+A widget scoped by `:project` that filters on an `attr_` column still errors on a
+project that never sent that attribute, even at All: the empty list does not
+make the column exist (see [Rules](#rules), the note on `:project` and `attr_<key>`).
+
 A `sql` widget follows each selector whose name it reads, and only those. A
 `query` widget needs no change: for each selector it follows with values
 picked, its query gains `{"column": <the selector's column>, "op": "in",

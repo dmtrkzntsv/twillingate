@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
@@ -141,7 +140,7 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		}
 		// Checked before the placement, which retries a conflict as a
 		// lost race for a key.
-		if err := s.refuseDroppedSelectors(ctx, d.ID, sels); err != nil {
+		if err := s.refuseDroppedSelectors(ctx, d.ID, selectorNames(storedSelectors(d.Selectors)), sels); err != nil {
 			return DashboardInfo{}, err
 		}
 		in.Selectors = &sels
@@ -191,17 +190,24 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 }
 
 // refuseDroppedSelectors refuses selectors as dashboard id's new list
-// when a live sql widget there reads a name it lacks (one removed or
-// renamed), naming the widgets: a change of label or column keeps every
+// when a live sql widget there reads a name of old that it lacks (one
+// removed or renamed), naming the widgets: a change of label or column keeps every
 // widget working, and a query widget follows whatever selectors there
 // are. A widget added between this check and the write is not seen; its
 // load then refuses the name, as it refuses any it is not given.
-func (s *Service) refuseDroppedSelectors(ctx context.Context, id int64, sels []Selector) error {
+func (s *Service) refuseDroppedSelectors(ctx context.Context, id int64, old []string, sels []Selector) error {
 	ws, err := s.st.ListWidgets(ctx, id)
 	if err != nil {
 		return err
 	}
-	names := selectorNames(sels)
+	// Only a name the dashboard has and the new list lacks is dropped: a
+	// widget reading a name it never had does not hold this edit.
+	var gone []string
+	for _, n := range old {
+		if !slices.Contains(selectorNames(sels), n) {
+			gone = append(gone, ":"+n)
+		}
+	}
 	var readers, dropped []string
 	for _, w := range ws {
 		if w.ArchivedAt != "" || w.SourceType != "sql" {
@@ -213,7 +219,7 @@ func (s *Service) refuseDroppedSelectors(ctx context.Context, id int64, sels []S
 		}
 		reads := false
 		for _, p := range params {
-			if allowedParams[p] || slices.Contains(names, strings.TrimPrefix(p, ":")) {
+			if !slices.Contains(gone, p) {
 				continue
 			}
 			reads = true

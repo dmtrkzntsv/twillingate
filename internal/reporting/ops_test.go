@@ -2563,3 +2563,28 @@ func TestCheckUserWidgetsReadsSelectors(t *testing.T) {
 		t.Errorf("CheckUserWidgets = %+v, %v; want no failure", failed, err)
 	}
 }
+
+// TestUpdateSelectorsIgnoresUndeclaredReader: a live sql widget reading a
+// name the dashboard does not have holds no edit of the selectors, and is
+// not named when another name is dropped.
+func TestUpdateSelectorsIgnoresUndeclaredReader(t *testing.T) {
+	svc := newTestService(t)
+	answerSQL(t, svc)
+	ctx := context.Background()
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel, campaignSel}, readsDeployment("Count"))
+	// The row loses :deployment behind the service's back, as an older
+	// build could have left it: its widget now reads an undeclared name.
+	row, err := svc.st.GetDashboard(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.Selectors = selectorsText([]Selector{campaignSel})
+	if err := svc.st.UpdateDashboard(ctx, row, store.AuditEntry{Actor: "test", Action: "dashboard.update"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sels := range [][]Selector{{{Name: "campaign", Label: "Other", Column: "utm_campaign"}}, {}} {
+		if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &sels}); err != nil {
+			t.Errorf("%v: %v", sels, err)
+		}
+	}
+}

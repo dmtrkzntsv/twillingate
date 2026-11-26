@@ -500,6 +500,8 @@ func TestStreamMixedDashboards(t *testing.T) {
 		}
 	}
 	seen := map[string]bool{}
+	nat.mu.Lock()
+	defer nat.mu.Unlock()
 	for _, q := range nat.qs {
 		if len(q.Where) > 1 {
 			seen[q.Where[0].Column+"="+strings.Join(q.Where[0].Values, ",")] = true

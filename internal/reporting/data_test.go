@@ -599,7 +599,7 @@ func TestSelectorValuesInCacheKey(t *testing.T) {
 	if ab == a {
 		t.Errorf("different values: both %q", a)
 	}
-	if want := todaysKey(t, svc, id) + `:s.deployment=["a","b"]`; ab != want {
+	if want := todaysKey(t, svc, id) + `:s.deployment/attr_deployment=["a","b"]`; ab != want {
 		t.Errorf("key %q, want %q", ab, want)
 	}
 	camp := keyOf(t, svc, selectorReq(id, map[string][]string{"campaign": {"a", "b"}}))
@@ -663,7 +663,7 @@ func TestSQLWidgetBindsSelector(t *testing.T) {
 		t.Fatal(err)
 	}
 	all := fmt.Sprintf("%d:sql:%x", id, sha256.Sum256([]byte(w.Source)))
-	if got, want := keyOf(t, svc, in), all+`:s.deployment=["cloud"]`; got != want {
+	if got, want := keyOf(t, svc, in), all+`:s.deployment/attr_deployment=["cloud"]`; got != want {
 		t.Errorf("key %q, want %q", got, want)
 	}
 	if _, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id}); err != nil {
@@ -699,5 +699,44 @@ func TestQueryMissingAttributeNoRows(t *testing.T) {
 	}
 	if rows := got.Data.(readsql.Result).Rows; len(rows) != 0 {
 		t.Errorf("rows %v, want none", rows)
+	}
+}
+
+// TestSelectorColumnInCacheKey: the same name and values on another column
+// is another key, so a changed selector does not serve the old results.
+func TestSelectorColumnInCacheKey(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	in := selectorReq(id, map[string][]string{"deployment": {"cloud"}})
+	before := keyOf(t, svc, in)
+	sels := []Selector{{Name: "deployment", Label: "Deployment", Column: "attr_hosting"}}
+	if _, err := svc.UpdateDashboard(context.Background(), "test", UpdateDashboard{ID: d.ID, Selectors: &sels}); err != nil {
+		t.Fatal(err)
+	}
+	if after := keyOf(t, svc, in); after == before {
+		t.Errorf("column changed, key still %q", after)
+	}
+}
+
+// TestSelectorPicksDedupedAndCapped: repeated values count once, and more
+// than 100 distinct ones for a selector are refused, naming it.
+func TestSelectorPicksDedupedAndCapped(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	if got, want := keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"a", "a", "b"}})),
+		keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"a", "b"}})); got != want {
+		t.Errorf("repeated value: key %q, want %q", got, want)
+	}
+	many := make([]string, 101)
+	for i := range many {
+		many[i] = fmt.Sprintf("v%d", i)
+	}
+	_, err := svc.WidgetData(context.Background(), selectorReq(id, map[string][]string{"deployment": many}))
+	wantRefusal(t, err, store.ErrInvalid, "selector deployment has 101 values, at most 100")
+	_, err = svc.WidgetData(context.Background(), selectorReq(id, map[string][]string{"deployment": append(many[:100:100], many[0])}))
+	if err != nil {
+		t.Errorf("100 distinct plus a repeat: %v", err)
 	}
 }
