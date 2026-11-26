@@ -2,7 +2,9 @@ package sqlbind
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -123,5 +125,121 @@ func TestBindRefusals(t *testing.T) {
 func TestTrim(t *testing.T) {
 	if got, want := Trim("SELECT 1 AS a -- one\n;; \t\n"), "SELECT 1 AS a -- one"; got != want {
 		t.Errorf("Trim = %q, want %q", got, want)
+	}
+}
+
+func TestBindList(t *testing.T) {
+	text := ListText([]string{"cloud"})
+	q, args, err := Bind("SELECT 1 WHERE list_contains(:d, x)", map[string]Value{":d": {Type: ListType, Text: text}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "SELECT 1 WHERE list_contains(CAST($tw_d AS VARCHAR[]), x)"; q != want {
+		t.Errorf("sql = %q, want %q", q, want)
+	}
+	if want := map[string]string{"tw_d": text}; !reflect.DeepEqual(args, want) {
+		t.Errorf("args = %q, want %q", args, want)
+	}
+}
+
+func TestBindRefusesOtherBracketTypes(t *testing.T) {
+	for _, typ := range []string{"INT[]", "VARCHAR[];", "VARCHAR[][]"} {
+		_, _, err := Bind("SELECT :d", map[string]Value{":d": {Type: typ, Text: "[]"}})
+		if !errors.Is(err, ErrRefused) {
+			t.Errorf("Bind with type %q: err = %v, want ErrRefused", typ, err)
+		}
+	}
+}
+
+// The repo's tests reach no real DuckDB engine (it is an external process),
+// so TestListTextRoundTrip reads ListText's output with parseDuckList, a
+// test-only parser of DuckDB's list cast from VARCHAR: '[' then elements
+// separated by ',', then ']'; an element is either double-quoted, where a
+// backslash escapes the next character, or bare and trimmed of surrounding
+// whitespace.
+func parseDuckList(s string) ([]string, error) {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '[' || s[len(s)-1] != ']' {
+		return nil, fmt.Errorf("not a list: %q", s)
+	}
+	body := s[1 : len(s)-1]
+	out := []string{}
+	i := 0
+	skipSpace := func() {
+		for i < len(body) && (body[i] == ' ' || body[i] == '\t') {
+			i++
+		}
+	}
+	skipSpace()
+	if i == len(body) {
+		return out, nil
+	}
+	for {
+		skipSpace()
+		var el strings.Builder
+		if i < len(body) && body[i] == '"' {
+			i++
+			closed := false
+			for i < len(body) && !closed {
+				switch body[i] {
+				case '\\':
+					if i+1 >= len(body) {
+						return nil, fmt.Errorf("dangling backslash in %q", s)
+					}
+					el.WriteByte(body[i+1])
+					i += 2
+				case '"':
+					closed = true
+					i++
+				default:
+					el.WriteByte(body[i])
+					i++
+				}
+			}
+			if !closed {
+				return nil, fmt.Errorf("unterminated quote in %q", s)
+			}
+			skipSpace()
+		} else {
+			start := i
+			for i < len(body) && body[i] != ',' {
+				i++
+			}
+			el.WriteString(strings.TrimSpace(body[start:i]))
+		}
+		out = append(out, el.String())
+		if i == len(body) {
+			return out, nil
+		}
+		if body[i] != ',' {
+			return nil, fmt.Errorf("unexpected %q at %d in %q", body[i], i, s)
+		}
+		i++
+	}
+}
+
+func TestListTextRoundTrip(t *testing.T) {
+	for _, v := range [][]string{
+		{},
+		{"a"},
+		{"a", "b"},
+		{"it's"},
+		{`say "hi"`},
+		{"a,b"},
+		{"[x]"},
+		{`back\slash`},
+		{""},
+		{"  padded  "},
+		{"ünïcödé"},
+		{`\"`, `",`, `\`},
+	} {
+		text := ListText(v)
+		got, err := parseDuckList(text)
+		if err != nil || !reflect.DeepEqual(got, v) {
+			t.Errorf("ListText(%q) = %q reads back as %q (err %v)", v, text, got, err)
+		}
+	}
+	if got := ListText(nil); got != "[]" {
+		t.Errorf("ListText(nil) = %q, want []", got)
 	}
 }
