@@ -148,4 +148,5 @@ type SystemDashboard struct {
 	Widgets        []Widget // Name identifies the row; SortKey, sizes and content as in the files
 	Sidebar        bool     // the fixture's "sidebar": written on insert only, then the install's (D6)
 	ProjectTab     bool     // the fixture's "project_tab": the release's, re-synced every time (D6)
+	Selectors      string   // the fixture's "selectors" as JSON text, "[]" for none: the release's, re-synced every time
 }

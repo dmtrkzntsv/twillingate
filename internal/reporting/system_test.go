@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"reflect"
 	"regexp"
@@ -128,6 +129,55 @@ func TestSystemDashboards(t *testing.T) {
 	for key := range mayBeEmpty {
 		if !seen[key] {
 			t.Errorf("mayBeEmpty names %s, which is not a system widget", key)
+		}
+	}
+
+	// A second pass: every Views widget loads under a host pick the
+	// fixture's events have, and the sessions and views widgets say they
+	// follow the host selector.
+	views, err := svc.Dashboard(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, to := presetDates("7d", today)
+	for _, w := range views.Widgets {
+		t.Run("views/"+w.Name+"/host selected", func(t *testing.T) {
+			_, err := svc.WidgetData(ctx, DataRequest{WidgetID: w.ID, ProjectID: pid, From: from, To: to,
+				Selectors: map[string][]string{"host": {"example.com"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains([]string{"avg-session", "avg-session-length", "bounce-rate", "views"}, w.Name) && !slices.Contains(w.FollowsSelectors, "host") {
+				t.Errorf("follows_selectors = %v, want it to contain host", w.FollowsSelectors)
+			}
+		})
+	}
+}
+
+// TestSystemViewsSelectors: the embedded definitions give Views exactly
+// the four selectors, in order, and every other built-in none.
+func TestSystemViewsSelectors(t *testing.T) {
+	system, err := fs.Sub(systemFS, "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fds, err := loadDashboards(system)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Selector{
+		{Name: "host", Label: "Host", Column: "host"},
+		{Name: "source", Label: "Source", Column: "utm_source"},
+		{Name: "medium", Label: "Medium", Column: "utm_medium"},
+		{Name: "campaign", Label: "Campaign", Column: "utm_campaign"},
+	}
+	for _, fd := range fds {
+		if fd.ID == 1 {
+			if !reflect.DeepEqual(fd.Selectors, want) {
+				t.Errorf("Views selectors = %+v, want %+v", fd.Selectors, want)
+			}
+		} else if len(fd.Selectors) != 0 {
+			t.Errorf("dashboard %d (%s) has selectors %+v, want none", fd.ID, fd.Title, fd.Selectors)
 		}
 	}
 }

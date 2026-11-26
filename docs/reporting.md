@@ -43,7 +43,8 @@ are in [deployment.md](deployment.md).
   Measures and Availability, one group (the Reports entry). They are never archived:
   `update_dashboard` with `sidebar: false` takes the group out of the
   sidebar, and `remove_project_tab` takes one off a project's page. Every
-  other write refuses them. To customize one, call `duplicate_dashboard`:
+  other write refuses them. Views ships Host, Source, Medium and Campaign
+  selectors, set by the release like the rest. To customize one, call `duplicate_dashboard`:
   the copy is a user dashboard you can edit. Duplicating never hides the
   source.
 - **User dashboards** are what agents create. Their ids start at 1001.
