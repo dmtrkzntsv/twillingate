@@ -1,4 +1,5 @@
-import type { ArchiveAfter, Widget, WidgetShare } from './api'
+import type { ArchiveAfter, Selector, Widget, WidgetShare } from './api'
+import type { Selection } from './selectors'
 
 /** What a widget needs to be shared or downloaded: the page's project and range, and whether it may write. */
 export interface ShareContext {
@@ -14,6 +15,35 @@ export interface ShareContext {
   to: string
   /** Whether the page hands its range to its widgets (it has a range switcher). */
   rangeShown: boolean
+  /** The dashboard's selectors and what is picked of them (absent: it has none, or the page shows none). */
+  selectors?: Selector[]
+  selection?: Selection
+}
+
+/**
+ * The picked values of the selectors a widget follows, in the dashboard's
+ * order; what a share is made under. A selector at All, or one the widget
+ * does not follow, is left out, so a share never names a filter that did
+ * not narrow its picture.
+ */
+export function shareSelection(widget: Pick<Widget, 'follows_selectors'>, ctx: Pick<ShareContext, 'selectors' | 'selection'>): Selection {
+  const out: Selection = {}
+  for (const { name } of ctx.selectors ?? []) {
+    const values = ctx.selection?.[name]
+    if (values?.length && widget.follows_selectors.includes(name)) out[name] = values
+  }
+  return out
+}
+
+/**
+ * The labels of the selectors that are set but that the widget does not
+ * follow, in the dashboard's order: what its card says it is "Not filtered
+ * by". Empty when nothing is set, or every set selector narrows it.
+ */
+export function unfollowedSelectors(widget: Pick<Widget, 'follows_selectors'>, ctx: Pick<ShareContext, 'selectors' | 'selection'>): string[] {
+  return (ctx.selectors ?? [])
+    .filter(({ name }) => ctx.selection?.[name]?.length && !widget.follows_selectors.includes(name))
+    .map((s) => s.label)
 }
 
 /**
@@ -22,10 +52,14 @@ export interface ShareContext {
  * range is never captioned with the page's. Spread into a ShareCard.
  */
 export function shareCaption(
-  widget: Pick<Widget, 'follows_project' | 'follows_range'>,
+  widget: Pick<Widget, 'follows_project' | 'follows_range' | 'follows_selectors'>,
   ctx: ShareContext
-): { projectName?: string; from?: string; to?: string } {
+): { projectName?: string; from?: string; to?: string; selection?: string[] } {
+  const picked = shareSelection(widget, ctx)
+  // As the share page words them: the selector's label, then its values.
+  const lines = (ctx.selectors ?? []).filter((s) => picked[s.name]).map((s) => `${s.label}: ${picked[s.name].join(', ')}`)
   return {
+    ...(lines.length > 0 ? { selection: lines } : {}),
     ...(ctx.project && widget.follows_project ? { projectName: ctx.project.name } : {}),
     ...(ctx.rangeShown && widget.follows_range ? { from: ctx.from, to: ctx.to } : {}),
   }

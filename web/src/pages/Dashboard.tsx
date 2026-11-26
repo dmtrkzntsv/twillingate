@@ -131,8 +131,10 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
       from,
       to,
       rangeShown,
+      selectors: dashboard.selectors,
+      selection: picked.selection,
     }),
-    [projectId, projectName, from, to, rangeShown]
+    [projectId, projectName, from, to, rangeShown, dashboard.selectors, picked.selection]
   )
   // Only a live user dashboard's group and widgets are arranged from the
   // page (D11, D14), and never while frozen: the dashboard on screen is
@@ -214,7 +216,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         <WidgetEditingProvider
           dashboardId={dashboard.dashboard_id}
           enabled={arrangeable}
-          defaults={{ projectId, range: { range: sel.range ?? '7d', from, to }, timezone: list.timezone }}
+          defaults={{ projectId, range: { range: sel.range ?? '7d', from, to }, timezone: list.timezone, selection: picked.selection }}
           copyTo={menus ? list.dashboards : undefined}
         >
           <DashboardHeader

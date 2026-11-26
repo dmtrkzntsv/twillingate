@@ -100,8 +100,10 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
       from: shareRange.from,
       to: shareRange.to,
       rangeShown,
+      selectors: dashboard.selectors,
+      selection: picked.selection,
     }),
-    [projectId, project.name, shareRange.from, shareRange.to, rangeShown]
+    [projectId, project.name, shareRange.from, shareRange.to, rangeShown, dashboard.selectors, picked.selection]
   )
   // A selector's values come from the project pinned here and each project a query widget fixes.
   const valueProjects = useMemo(() => selectorProjects(dashboard.widgets, projectId, []), [dashboard.widgets, projectId])
@@ -119,7 +121,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
     <WidgetEditingProvider
       dashboardId={dashboard.dashboard_id}
       enabled={arrange !== undefined}
-      defaults={{ projectId, range: { range: sel.range ?? '7d', from: shareRange.from, to: shareRange.to }, timezone: list.timezone }}
+      defaults={{ projectId, range: { range: sel.range ?? '7d', from: shareRange.from, to: shareRange.to }, timezone: list.timezone, selection: picked.selection }}
       copyTo={list.dashboards}
     >
       <DashboardHeader

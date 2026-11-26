@@ -188,6 +188,38 @@ describe('ShareDialog', () => {
     expect(form.get('from')).toBe('2026-09-05')
   })
 
+  it('names the followed, picked selectors on the card and sends only them', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)
+    let drawn = ''
+    vi.mocked(captureCard).mockImplementation(async (node) => {
+      drawn = node.querySelector('[data-share-meta]')?.textContent ?? '(none)'
+      return { image: new Blob(['1x']), image2x: new Blob(['2x']) }
+    })
+    const ctx: ShareContext = {
+      ...share,
+      selectors: [
+        { name: 'deployment', label: 'Deployment', column: 'attr_deployment' },
+        { name: 'campaign', label: 'Campaign', column: 'utm_campaign' },
+        { name: 'plan', label: 'Plan', column: 'attr_plan' },
+      ],
+      // Campaign is not followed, Plan is at All.
+      selection: { deployment: ['cloud'], campaign: ['spring'], plan: [] },
+    }
+    dialog({ ...widget, follows_selectors: ['deployment', 'plan'] }, ctx)
+    await user.click(await createButton())
+    expect(drawn).toBe('blog · Sep 5 – Oct 4, 2026 · Deployment: cloud')
+    expect(JSON.parse(create.mock.calls[0][0].get('selection') as string)).toEqual({ deployment: ['cloud'] })
+  })
+
+  it('sends an empty selection at All', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)
+    dialog()
+    await user.click(await createButton())
+    expect(create.mock.calls[0][0].get('selection')).toBe('{}')
+  })
+
   it('sends the archive choice', async () => {
     const user = userEvent.setup()
     const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)

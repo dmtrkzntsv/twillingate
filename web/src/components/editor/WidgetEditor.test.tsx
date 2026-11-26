@@ -98,6 +98,21 @@ describe('WidgetEditor', () => {
     expect(preview.mock.calls[0][0]).not.toHaveProperty('from') // the sql reads no range
   })
 
+  it("previews under the dashboard's selection", async () => {
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
+    open({ widget: line, dashboardId: 5, defaults: { ...defaults, selection: { deployment: ['cloud'], plan: [] } } })
+    await waitFor(() => expect(preview).toHaveBeenCalled())
+    expect(preview.mock.calls[0][0]).toMatchObject({ dashboard_id: 5, selectors: { deployment: ['cloud'], plan: [] } })
+  })
+
+  it('sends no dashboard or selectors with nothing picked', async () => {
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
+    open({ widget: line, dashboardId: 5, defaults: { ...defaults, selection: { plan: [] } } })
+    await waitFor(() => expect(preview).toHaveBeenCalled())
+    expect(preview.mock.calls[0][0]).not.toHaveProperty('dashboard_id')
+    expect(preview.mock.calls[0][0]).not.toHaveProperty('selectors')
+  })
+
   it('runs nothing as an add opens', async () => {
     const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
     open()

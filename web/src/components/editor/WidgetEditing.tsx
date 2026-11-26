@@ -117,6 +117,7 @@ export function WidgetEditingProvider({ dashboardId, enabled, defaults, copyTo, 
             onOpenChange={(open) => !open && setEditing({ ...editing, open: false })}
             widget={editing.widget}
             defaults={defaults}
+            dashboardId={editing.dashboardId}
             onSave={(draft) => (editing.widget ? edits.update(editing.widget, draft) : edits.add(editing.dashboardId, draft))}
           />
         </Suspense>

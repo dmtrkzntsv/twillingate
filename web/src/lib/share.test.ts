@@ -85,7 +85,7 @@ describe('embedCode', () => {
 
 describe('shareCaption', () => {
   const ctx: ShareContext = { project: { id: 7, name: 'blog' }, from: '2026-09-05', to: '2026-10-04', rangeShown: true }
-  const follows = (follows_project: boolean, follows_range: boolean) => ({ follows_project, follows_range })
+  const follows = (follows_project: boolean, follows_range: boolean, follows_selectors: string[] = []) => ({ follows_project, follows_range, follows_selectors })
 
   it('names the project and the range the widget follows', () => {
     expect(shareCaption(follows(true, true), ctx)).toEqual({ projectName: 'blog', from: '2026-09-05', to: '2026-10-04' })
@@ -100,6 +100,20 @@ describe('shareCaption', () => {
   it('leaves out what the page does not hand down: no project, no range switcher', () => {
     expect(shareCaption(follows(true, true), { ...ctx, project: undefined })).toEqual({ from: '2026-09-05', to: '2026-10-04' })
     expect(shareCaption(follows(true, true), { ...ctx, rangeShown: false })).toEqual({ projectName: 'blog' })
+  })
+
+  it('names the picked selectors the widget follows, by label, in the dashboard order', () => {
+    const picked: ShareContext = {
+      ...ctx,
+      selectors: [
+        { name: 'deployment', label: 'Deployment', column: 'attr_deployment' },
+        { name: 'campaign', label: 'Campaign', column: 'utm_campaign' },
+      ],
+      selection: { campaign: ['a', 'b'], deployment: ['cloud'] },
+    }
+    expect(shareCaption(follows(false, false, ['deployment', 'campaign']), picked)).toEqual({ selection: ['Deployment: cloud', 'Campaign: a, b'] })
+    expect(shareCaption(follows(false, false, ['campaign']), picked)).toEqual({ selection: ['Campaign: a, b'] })
+    expect(shareCaption(follows(false, false), picked)).toEqual({})
   })
 })
 

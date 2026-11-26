@@ -502,6 +502,45 @@ describe('WidgetCard with a remote table', () => {
   })
 })
 
+describe('WidgetCard selection note', () => {
+  const ctx: ShareContext = {
+    project: { id: 7, name: 'blog' },
+    from: '2026-09-20',
+    to: '2026-09-26',
+    rangeShown: true,
+    selectors: [
+      { name: 'deployment', label: 'Deployment', column: 'attr_deployment' },
+      { name: 'campaign', label: 'Campaign', column: 'utm_campaign' },
+    ],
+  }
+  const render = (selection: Record<string, string[]>, follows: string[] = []) => {
+    vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+    return renderWithProviders(<WidgetCard widget={{ ...statWidget(), follows_selectors: follows }} params={params} share={{ ...ctx, selection }} />)
+  }
+
+  it('says which set selector the card does not follow', async () => {
+    render({ deployment: ['cloud'] })
+    expect(await screen.findByText('Not filtered by Deployment')).toBeInTheDocument()
+  })
+
+  it('names every unfollowed selector that is set, in the dashboard order', async () => {
+    render({ campaign: ['a'], deployment: ['cloud'] })
+    expect(await screen.findByText('Not filtered by Deployment, Campaign')).toBeInTheDocument()
+  })
+
+  it('says nothing about a followed selector, or one at All', async () => {
+    render({ deployment: ['cloud'], campaign: [] }, ['deployment'])
+    await screen.findByText('12.3K')
+    expect(screen.queryByText(/Not filtered/)).not.toBeInTheDocument()
+  })
+
+  it('has no note with nothing set', async () => {
+    render({})
+    await screen.findByText('12.3K')
+    expect(screen.queryByText(/Not filtered/)).not.toBeInTheDocument()
+  })
+})
+
 describe('WidgetCard menu', () => {
   const shareCtx: ShareContext = { project: { id: 7, name: 'blog' }, from: '2026-09-20', to: '2026-09-26', rangeShown: true }
   const withShare = (share?: ShareContext) => renderWithProviders(<WidgetCard widget={statWidget()} params={params} share={share} />)

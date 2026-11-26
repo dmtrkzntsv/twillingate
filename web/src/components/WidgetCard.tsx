@@ -36,7 +36,7 @@ import { useNow } from '@/hooks/use-now'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { captureCard, downloadBlob } from '@/lib/capture'
-import { shareCaption, type ShareContext } from '@/lib/share'
+import { shareCaption, unfollowedSelectors, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, valueOptions, viewChanged, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshableSource, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
@@ -163,9 +163,14 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
     return valueOptions((res.data as SqlData | null)?.rows ?? [], res.page)
   }
 
+  // A selector that is set but not followed: nothing may look filtered that is not.
+  const unfollowed = share ? unfollowedSelectors(widget, share) : []
+  const notFiltered = unfollowed.length > 0 ? `Not filtered by ${unfollowed.join(', ')}` : undefined
+
   return (
     <WidgetFrame
       title={widget.title}
+      note={notFiltered}
       titleSlot={
         editing && renaming ? (
           <WidgetTitleField title={widget.title ?? ''} onSave={(t) => editing.rename(widget, t)} onDone={() => setRenaming(false)} />

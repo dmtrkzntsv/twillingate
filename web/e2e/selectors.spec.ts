@@ -63,6 +63,9 @@ test('a selector narrows the widgets that follow it, through the URL', async ({ 
     await expect.poll(() => card.innerText(), { timeout: 20_000 }).not.toBe(all)
     await expect(card.locator('[data-slot=skeleton]')).toHaveCount(0)
     const narrowed = await card.innerText()
+    // The note follows nothing, so its card says the pick does not filter it; the stat follows, so its card does not.
+    await expect(page.getByText('Not filtered by Deployment')).toHaveCount(1)
+    await expect(card.getByText(/Not filtered by/)).toHaveCount(0)
 
     // Reloaded, the URL keeps the selection, and the stat its narrowed answer.
     await page.reload()
@@ -74,6 +77,7 @@ test('a selector narrows the widgets that follow it, through the URL', async ({ 
     await expect.poll(() => new URL(page.url()).searchParams.has('s.deployment')).toBe(false)
     expect(new URL(page.url()).pathname).toBe(`/app/dashboards/${id}`)
     await expect(page.getByRole('button', { name: 'Deployment: All' })).toBeVisible()
+    await expect(page.getByText(/Not filtered by/)).toHaveCount(0)
   } finally {
     await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
   }

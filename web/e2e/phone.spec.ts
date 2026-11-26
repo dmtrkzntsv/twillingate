@@ -631,7 +631,11 @@ test("a dashboard's selectors fit a phone, their checklist a full-width sheet", 
         { name: 'first', label: longLabel, column: 'browser' },
         { name: 'second', label: `${longLabel}, again`, column: 'country' },
       ],
-      widgets: [{ component: 'stat', title: 'Views', source: { type: 'query', content: stat }, width: 6, height: 4 }],
+      widgets: [
+        { component: 'stat', title: 'Views', source: { type: 'query', content: stat }, width: 6, height: 4 },
+        // Follows neither selector, so its card says so, in a line longer than a phone is wide.
+        { component: 'markdown', title: 'Note', source: { type: 'md', content: 'Plain note.' }, width: 6, height: 4 },
+      ],
     },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
@@ -657,6 +661,13 @@ test("a dashboard's selectors fit a phone, their checklist a full-width sheet", 
     const boxes = await Promise.all(switchers.map(async (s) => (await s.boundingBox())!))
     for (const [i, b] of boxes.entries()) expect(b.width, `switcher ${i} width`).toBeGreaterThanOrEqual(140)
     expect(new Set(boxes.map((b) => Math.round(b.y))).size, 'switcher lines').toBeGreaterThan(1)
+
+    // The note truncates inside its card: it stays within the viewport and the page does not scroll sideways.
+    const note = page.getByText(/^Not filtered by /)
+    await expect(note).toHaveText(`Not filtered by ${longLabel}, ${longLabel}, again`)
+    const noteBox = (await note.boundingBox())!
+    expect(noteBox.x + noteBox.width, 'the note stays in the viewport').toBeLessThanOrEqual(PHONE.width)
+    expect(await sidewaysScroll(page), 'selection note').toEqual([])
 
     await first.click()
     const sheet = page.getByRole('dialog', { name: longLabel })

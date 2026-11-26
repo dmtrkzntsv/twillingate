@@ -20,6 +20,7 @@ import { carryProps, fieldsOf, needsHint } from '@/lib/props-form'
 import { parseSchemaViews } from '@/lib/schema-views'
 import { codeTypesOf, draftOf, isDirty, paramsOf, sourceOf, sourceTypeOf, toQuery, withCode, withComponent, type CodeType, type Draft } from '@/lib/widget-draft'
 import { useSqlAvailable } from '@/hooks/use-sql-available'
+import type { Selection } from '@/lib/selectors'
 import { iconOf } from './component-icons'
 import PropsForm, { SettingRow } from './PropsForm'
 import Splitter from './Splitter'
@@ -43,6 +44,8 @@ export interface EditorDefaults {
   projectId?: number
   range: RangeValue
   timezone: string
+  /** What is picked of the dashboard's selectors: a draft that follows one previews narrowed by it. */
+  selection?: Selection
 }
 
 interface WidgetEditorProps {
@@ -51,6 +54,8 @@ interface WidgetEditorProps {
   /** Absent: adding a widget. */
   widget?: Widget
   defaults: EditorDefaults
+  /** The dashboard the widget is on, whose selectors `defaults.selection` names. */
+  dashboardId?: number
   /** Saves the draft; resolves on success (the modal closes), throws ApiError/Error to show its message in the banner. */
   onSave(draft: Draft): Promise<void>
 }
@@ -67,6 +72,11 @@ const SURFACE_MIN_PX = 160
 // Neither half narrower than this share of the width.
 const SPLIT_MIN = 25
 const SPLIT_KEY = 'twillingate.editor.split'
+
+/** Whether any selector has a value picked: the preview then names the dashboard and its selection. */
+function hasPicks(selection: Selection | undefined): selection is Selection {
+  return selection !== undefined && Object.values(selection).some((v) => v.length > 0)
+}
 
 function readSplit(): number {
   try {
@@ -124,7 +134,7 @@ export default function WidgetEditor(p: WidgetEditorProps) {
   return <Editor key={`${opened.n}:${p.widget?.widget_id ?? 'new'}`} {...p} />
 }
 
-function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorProps) {
+function Editor({ open, onOpenChange, widget, defaults, dashboardId, onSave }: WidgetEditorProps) {
   const engine = useSqlAvailable()
   const [draft, setDraft] = useState(() => startDraft(widget, engine.sql))
   // A new draft started on sql while the server's source types loaded, and it takes none: it moves to query.
@@ -209,6 +219,8 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
         source: { type: codeType, content: code },
         ...(uses.project && projectId !== undefined ? { project_id: projectId } : {}),
         ...(uses.range ? span : {}),
+        // The dashboard's picks, which the server applies only to the selectors the draft reads or follows.
+        ...(dashboardId !== undefined && hasPicks(defaults.selection) ? { dashboard_id: dashboardId, selectors: defaults.selection } : {}),
       })
       if (n === latest.current) setRun({ kind: 'done', result, component, props })
     } catch (err) {
