@@ -125,13 +125,56 @@ the switcher shows (a project with no event files shows no rows). A dashboard sh
 when at least one of its live widgets follows it. `get_dashboard` reports
 `follows_project` and `follows_range` for the dashboard and for each widget.
 
+**A dashboard can declare selectors**, up to 5 pickers its page shows beside
+the switchers, each `{name, label, column}`:
+
+```json
+{"selectors": [
+  {"name": "deployment", "label": "Deployment", "column": "attr_deployment"},
+  {"name": "campaign",   "label": "Campaign",   "column": "utm_campaign"}
+]}
+```
+
+`name` is a lower-case letter followed by up to 31 lower-case letters, digits
+or `_`, unique on the dashboard and not `project`, `from` or `to`; it is the
+SQL parameter (`:deployment`). `column` is a text filter column of `events`
+(`utm_campaign`, `host`, `country`, `device_label`, …) or `attr_<key>` for
+any key, sent yet or not; a day column (`day`, `user_first_seen`,
+`group_first_seen`), a number column and a `def_` column are refused.
+`label` defaults to the column without `attr_`. `create_dashboard` and
+`update_dashboard` take `selectors` as the whole list (`[]` clears it); a
+group's tabs each have their own, `duplicate_dashboard` copies them, and a
+system dashboard has none. A viewer picks values of each, and nothing picked
+means All. **A widget follows a selector** as it follows a switcher: a `query`
+widget on `events`, `views`, `product`, `measures` or `checks` follows each
+one whose column its table takes as a filter, on `sessions` only
+`utm_source`, `utm_medium`, `utm_campaign` and `referrer_source`, on
+`identities` none; a `sql` widget follows each one whose `:name` it reads (a
+`VARCHAR[]` of the picked values, the empty list for All); Markdown none.
+`get_dashboard` lists the dashboard's `selectors`, and each widget's
+`follows_selectors`, the names it follows. A selector a live `sql` widget
+reads cannot be removed or renamed (`409 conflict`, naming the widgets);
+its `label` and `column` can change.
+
+`selector_values` lists what a viewer can pick: a selector's column over
+`project_ids` (1 to 10, merged; the page sends the project the switcher shows
+and every project a query widget fixes) and `from`/`to`, as `{value, count}` by
+event count, the busiest first, at most 100. `search` keeps the values that
+contain it, in any case, among each project's 1,000 busiest values of the
+column in the range (a rarer value is not found by search), and `picked` values stay in the list with a count of 0
+when the range has none of them, so a viewer can untick them. It reads the
+column through the native engine, as a widget does. An empty value is not
+listed; a name the dashboard does not declare is a `404 not_found`, and no
+project or more than 10 a `400 invalid`.
+
 **Every write validates the whole result** and refuses with a message that says
 what to change: the component exists and accepts the source type; the SQL uses
-only the three parameters, runs, and returns the columns the component reads
-(checked on the last seven days and, when it uses `:project`, on each live
-project with event files in turn, the one with the newest day first: it passes
-on the first it runs on, and is refused with that first project's error only
-when it fails on every one); a structured query is valid and, after
+only the three parameters and the dashboard's selectors, runs, and returns the
+columns the component reads (checked on the last seven days, each selector
+bound to the empty list, and, when it uses `:project`, on each live project
+with event files in turn, the one with the newest day first: it passes on the
+first it runs on, and is refused with that first project's error only when it
+fails on every one); a structured query is valid and, after
 `rename` and `columns`, returns those columns, of the types they take (checked without
 reading data); Markdown is not
 empty; props match the schema; the size is in range. Refusals come back as tool
@@ -351,7 +394,9 @@ what a structured query cannot say.
   on its selected one.
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
-  is the range's length in days. `?`, `$1` and `$name` are refused.
+  is the range's length in days; and the names of the dashboard's selectors,
+  each a `VARCHAR[]`, the empty list for All: `(len(:name) = 0 OR
+  list_contains(:name, <column>))`. `?`, `$1` and `$name` are refused.
   Outside strings and comments, a `:` before a letter reads as a parameter
   (`::` casts are fine): write a slice `list[a : b]` and a lambda
   `lambda x: x + 1`, with a space after the colon.
@@ -436,12 +481,13 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the built-in widgets (each one's id, dashboard, title, component and what it reads), the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` (the project its viewer last chose), live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never), and `console_url`, the server's `CONSOLE_URL` (absent when it is not set) |
-| `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` (the project its viewer last chose), live `widgets` count, `selectors` (each `name`, `label` and `column`; `[]` when none), `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never), and `console_url`, the server's `CONSOLE_URL` (absent when it is not set) |
+| `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `selectors`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order, each with `follows_project`, `follows_range` and `follows_selectors` |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
-| `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
-| `create_dashboard` | `title` (at least 2 characters), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
-| `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
+| `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`, `selectors` (JSON text, `{"deployment":["cloud"]}`; see [Selector parameters](#selector-parameters)); for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
+| `selector_values` | `dashboard_id`, `name`, `project_ids`, `from`, `to`, `search`?, `picked`? | `values`: the selector's column's values over those projects and that range, each `{value, count}`, the busiest first, at most 100, then the `picked` ones the range lacks with `count` 0 |
+| `create_dashboard` | `title` (at least 2 characters), `group_id`, `after`, `selectors`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget or selector creates nothing |
+| `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`, `selectors`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `selectors` replaces the whole list (`[]` clears it, absent keeps it); a name a live `sql` widget reads cannot be removed or renamed. `whole_group` takes `title` alone. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id`, `where`, `project_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false`. `where` (filters, as a structured query's) and `project_id` narrow every copied `query` widget: its query's rows must also pass `where`, before its own filters, and it reads `project_id` whatever the switcher shows; Markdown is copied as it is, and a `sql` widget among the copies, or a filter one of the queries cannot take (a column its table lacks), refuses the whole copy |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides a user dashboard (`whole_group`: every archived member of its group), in the sidebar and on project pages where it was. A system dashboard is refused |
@@ -451,9 +497,9 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
 | `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height`, `after` | the widget; omitted fields are kept. `after` moves it after that widget of its dashboard (`0` first). A change of only `width`, `height`, `after`, `title` and `name` runs no query |
-| `copy_widget` | `widget_id`, `dashboard_id`, `after`, `where`, `project_id` | the independent copy, same size; the original may be on a system dashboard. `where` and `project_id` narrow a `query` widget's copy as `duplicate_dashboard`'s do |
+| `copy_widget` | `widget_id`, `dashboard_id`, `after`, `where`, `project_id` | the independent copy, same size; the original may be on a system dashboard. `where` and `project_id` narrow a `query` widget's copy as `duplicate_dashboard`'s do. A `sql` widget reading a selector the target dashboard lacks is refused |
 | `archive_widget` | `widget_id` | hides it in place |
-| `restore_widget` | `widget_id` | puts it back where it was |
+| `restore_widget` | `widget_id` | puts it back where it was; a `sql` widget reading a selector its dashboard no longer has is refused |
 | `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date; `project_id` and `project_name` are `null` for a share with no project |
 | `update_widget_share` | `id`, `archive_after` | the share, its `archive_at` counted from now (`null` for `project` or `never`); an archived share is a `409 conflict` |
 | `archive_widget_share` | `id` | the share, taken down at once: its page and images answer 404 |
@@ -479,7 +525,10 @@ tool, `view`, `preview_widget`, `widget_stream`, `create_widget_share` and
 The console's widget editor runs an unsaved SQL or
 `query` source with `POST /api/widgets/preview`, which binds the project and
 range given and returns the rows with the first way they do not fit the
-component; agents call `add_widget`, which validates. The page stores the
+component; with `dashboard_id` the draft may read that dashboard's selectors,
+bound to `selectors` (the empty list for All), and a `query` draft narrows by
+the ones it follows; `selectors` without `dashboard_id` is refused. Agents
+call `add_widget`, which validates. The page stores the
 viewer's selection with `PUT …/view`, which is viewer state rather than a
 definition, so it is allowed on system dashboards and not audited. It uploads
 a share with `POST /api/widget-shares`, since only a browser can capture the
@@ -494,9 +543,10 @@ public `/share/<id>.png` stops at archiving
 | `GET` | `/api/dashboards` | `list_dashboards` | — |
 | `GET` | `/api/dashboards/{dashboard_id}` | `get_dashboard` | — |
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
-| `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
-| `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `group_id`, `after`, `widgets` → 201 |
-| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after`; or `sidebar` |
+| `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, `selectors` (JSON text, URL-encoded), and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
+| `GET` | `/api/dashboards/{dashboard_id}/selectors/{name}/values` | `selector_values` | query: `project_id` (repeat it, 1 to 10 times), `from`, `to`, `search`, `picked` (repeat it) |
+| `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `group_id`, `after`, `selectors`, `widgets` → 201 |
+| `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after`, `selectors`; or `sidebar` |
 | `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
 | `POST` | `/api/dashboards/{dashboard_id}/restore` | `restore_dashboard` | body: `whole_group` (optional) |
@@ -510,9 +560,9 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id` → `{"status":"saved"}` |
-| `POST` | `/api/widgets/stream` | `widget_stream`, REST only: no MCP tool | body: `{"widgets":[{"widget_id","project_id","from","to","fresh"}]}`, at most 64 → `text/event-stream`: one `widget` event per widget, `{"widget_id","data"}` or `{"widget_id","error":{"code","message"}}`, then `done` |
-| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
-| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id` (optional), `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
+| `POST` | `/api/widgets/stream` | `widget_stream`, REST only: no MCP tool | body: `{"widgets":[{"widget_id","project_id","from","to","fresh","selectors"}]}`, at most 64, `selectors` a JSON object → `text/event-stream`: one `widget` event per widget, `{"widget_id","data"}` or `{"widget_id","error":{"code","message"}}`, then `done` |
+| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to`, `dashboard_id`, `selectors` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
+| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id` (optional), `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `selection` (JSON text, `{"deployment":["cloud"]}`), `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
 | `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
@@ -524,7 +574,10 @@ public `/share/<id>.png` stops at archiving
 `POST /api/widgets/stream` loads up to 64 widgets in one request, with the
 same bearer token. Each widget takes what `GET /api/widgets/{widget_id}/data`
 takes, except a remote table's `filters`, `sort`, `distinct`, `offset` and
-`limit`, which stay on the GET route. A bad body or more than 64 widgets is a
+`limit`, which stay on the GET route. `selectors` goes on each widget, as a
+JSON object rather than text (`"selectors": {"deployment": ["cloud"]}`), and
+is checked against that widget's own dashboard, so one request can mix
+dashboards; a name its dashboard lacks is that widget's `invalid` error. A bad body or more than 64 widgets is a
 plain JSON error before anything streams. The answer is Server-Sent Events
 (`Content-Type: text/event-stream`, `Cache-Control: no-cache`,
 `X-Accel-Buffering: no`), each event flushed as it is written:
@@ -1505,7 +1558,8 @@ since `duration` renders seconds.
 
 ## Parameters and ranges
 
-A `sql` source can use three named parameters, and no others:
+A `sql` source can use three named parameters, and beside them only the names
+of its dashboard's selectors (see [Concepts](#concepts)):
 
 | Parameter | Value | Using it means |
 | --- | --- | --- |
@@ -1545,6 +1599,63 @@ days apart, and `from` not after today; a `to` after today is clamped to
 today. Days are the instance's days, which are UTC (`timezone` on
 `list_dashboards`): "today" is the UTC date everywhere, whatever the viewer's
 clock says.
+
+### Selector parameters
+
+Each of the dashboard's selectors (see [Concepts](#concepts)) is a parameter
+of its `sql` widgets, by its `name`: `:deployment` is a `VARCHAR[]` of the
+values the viewer picked. **All**, nothing picked, is the **empty list**,
+never NULL, so write the filter as:
+
+```sql
+AND (len(:deployment) = 0 OR list_contains(:deployment, attr_deployment))
+```
+
+A widget scoped by `:project` that filters on an `attr_` column still errors on a
+project that never sent that attribute, even at All: the empty list does not
+make the column exist (see [Rules](#rules), the note on `:project` and `attr_<key>`).
+
+A `sql` widget follows each selector whose name it reads, and only those. A
+`query` widget needs no change: for each selector it follows with values
+picked, its query gains `{"column": <the selector's column>, "op": "in",
+"values": [...]}` ahead of its own `where` (on a funnel or a `paths` query,
+every step, as `where` does). An attribute no event in the range carries
+matches nothing: the widget shows no rows, not an error.
+
+`widget_data` takes the picked values as `selectors`, JSON text of name to a
+list of values, `{"deployment": ["cloud", "self-hosted"]}`; a stream item
+takes the same as an object. An absent name or an empty list is All. A name
+the widget's dashboard does not declare is refused (`dashboard 12 has no
+selector x`); a selector the widget does not follow is ignored, so a page
+sends one `selectors` object to every widget. Each widget's cache entry is
+per the values of the selectors it follows.
+
+A worked example: a dashboard with a Deployment selector, a `query` stat and
+a `sql` bar list both following it.
+
+```json
+{"title": "Deployments",
+ "selectors": [{"name": "deployment", "label": "Deployment", "column": "attr_deployment"}],
+ "widgets": [
+  {"component": "stat", "title": "Visitors",
+   "source": {"type": "query", "content": "{\"query\":{\"kind\":\"stat\",\"table\":\"views\",\"metrics\":[{\"op\":\"actors\",\"as\":\"value\"}]}}"}},
+  {"component": "bar_list", "title": "Top pages",
+   "source": {"type": "sql", "content": "SELECT path AS label, count(*) AS value FROM views WHERE project_id = :project AND day BETWEEN :from AND :to AND (len(:deployment) = 0 OR list_contains(:deployment, attr_deployment)) GROUP BY path ORDER BY value DESC LIMIT 10"}}
+ ]}
+```
+
+`get_dashboard` then reports `"follows_selectors": ["deployment"]` on both.
+Loading the stat for cloud only:
+
+```json
+{"widget_id": 41, "project_id": 1, "from": "2026-09-01", "to": "2026-09-13",
+ "selectors": "{\"deployment\": [\"cloud\"]}"}
+```
+
+runs its query with `"where": [{"column": "attr_deployment", "op": "in",
+"values": ["cloud"]}]`, and the bar list binds `:deployment` to `['cloud']`.
+Without `selectors` both read every deployment, as they would with no
+selector at all.
 
 ## Layout
 
@@ -1651,7 +1762,11 @@ and the chart below. The captions name only what the widget follows: a
 widget pinned to its own project (`follows_project: false`) or range
 (`follows_range: false`, or a dashboard without a range switcher) is
 captioned without it, on the card and on the page; with neither, there is
-no caption line. The chart is drawn at the card's size with larger type and fewer
+no caption line. A share made under a dashboard's selectors names them too, as
+`Deployment: cloud` (the selector's label, then its values joined by `, `),
+after the range, on the page and in its link preview; only the selectors the
+widget follows and that had values are kept (`selection` in the share's JSON,
+`{}` at All), and a share made at All names none. The chart is drawn at the card's size with larger type and fewer
 ticks than on the dashboard, and without tooltips, menus, filters,
 pagination or scrollbars. A table shows the rows that fit and "and N more"
 ("and N+ more", or "and more", when its answer was cut short at the row cap);
@@ -1877,13 +1992,18 @@ widget's name (`widget visitors: …`), and nothing is created.
 | columns: days is named twice | Name each kept column once; omit `columns` to keep them all. |
 | a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
 | stat.value: the query's column is text, not number | Rename a column of that type onto the input: a metric for a number, `day` for a day. |
-| sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
+| sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three; to pick it on the page, declare a selector named `path` on the dashboard. |
+| dashboard 12 has no selector campaign | `selectors` names a selector the widget's dashboard does not declare; `get_dashboard` lists its `selectors`. A selector the widget does not follow is fine, only an undeclared name is refused. |
+| selectors: pass the dashboard_id whose selectors they are | A preview takes `selectors` only with the `dashboard_id` they belong to. |
+| sql uses :deployment; widgets get only :project, :from and :to, and this dashboard's selector :campaign | The SQL reads a selector this dashboard does not declare: add it to the dashboard's `selectors` with `update_dashboard`, or read one it has. `copy_widget` and `restore_widget` refuse such a widget the same way. |
+| widget count (12) reads :deployment, which these selectors no longer have; change its sql or archive it first | A selector a live `sql` widget reads cannot be removed or renamed. Keep its `name` (its `label` and `column` can change), or change the widget first. |
+| selectors[0].column: day is a day column; a selector picks text values | A selector's column is a text filter column of `events` or `attr_<key>`. |
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS DOUBLE)` where needed. An empty value (SQL `NULL`) always passes. |
 | Catalog Error: Table with name v_views_daily does not exist! …; widget SQL is DuckDB SQL over events, views, product, measures, checks, sessions, identities and aliases; see docs://reporting | The widget was written for SQLite, before widgets moved to the event files. Rewrite it over [Tables](#tables); see [When widgets break after an update](#when-widgets-break-after-an-update). The same hint follows `julianday`, `strftime('%s', …)`, `date(x, '-1 day')`, the `identities` columns the files do not have, the JSON `attributes` column (each key is its own column now: `json_extract(attributes, '$.plan')` reads `attr_plan`), `MAX(a, b)` with two arguments (`GREATEST` here) and any syntax error. |
 | read_parquet() is not allowed (only range, generate_series and unnest are); SQL here reads only the tables events, views, product, measures, checks, sessions, identities and aliases, by their plain names, and its own WITH names | Read the eight tables in [Tables](#tables); a widget never reads a file itself. The same refusal names a schema-qualified table (`main.events names a schema`: write `events`, scoped by `:project`) and any other table (`"_tw_all" is not a table here`). |
-| ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
+| ? is not a parameter here; use :name | Use `:project`, `:from`, `:to` or a selector's name, or write the value into the SQL. `$1` and `$name` are refused the same way. |
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | the query ran out of the SQL engine's memory limit … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
@@ -1904,7 +2024,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | dashboard 1 is a system dashboard and changes only with a release; duplicate_dashboard makes an editable copy | `duplicate_dashboard`, then change the copy. |
 | dashboard 1 is a built-in dashboard and is never archived; update_dashboard {sidebar: false} takes its group out of the sidebar | `archive_dashboard` and `restore_dashboard` take user dashboards only. Hide a system group with `update_dashboard` `{sidebar: false}`, show it with `{sidebar: true}`. |
 | dashboard 1001 is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away | `update_dashboard` takes `sidebar` for system dashboards only. To take one of your own out of the sidebar, `archive_dashboard` it. |
-| sidebar goes on its own; give title, after or group_id in another call | Send `sidebar` without `title`, `after` or `group_id`. |
+| sidebar goes on its own; give title, after, group_id or selectors in another call | Send `sidebar` without `title`, `after`, `group_id` or `selectors`. |
 | project 1 already has dashboard 1001 as a tab (`409 conflict`) | It is there already; `list_project_tabs` lists the page. |
 | after 7 is not one of project 1's tabs | Name a tab of that project, `0` for the first, or (in `add_project_tab`) leave `after` out for last. |
 | dashboard 1001 is archived; restore_dashboard first | `restore_dashboard` (updating, adding to or duplicating an archived dashboard is refused). For a widget: widget 42 is archived; restore_widget first. |
@@ -1914,9 +2034,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | preview runs sql and query only; markdown is drawn as it is typed | `preview_widget` takes a `sql` or `query` source; a `md` widget needs no query to preview. |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
-| nothing to update; give title, after or group_id | Give a title, or something to change. |
+| nothing to update; give title, after, group_id or selectors | Give a title, or something to change. |
 | title must have at least 2 characters; group title must have at least 2 characters | Dashboard titles and group names need two characters or more (trimmed). A `whole_group` update needs a `title`. |
-| whole_group renames the group; it takes no after or group_id | Send `whole_group` with `title` alone; move the dashboard in another call. |
+| whole_group renames the group; it takes no after, group_id or selectors | Send `whole_group` with `title` alone; move the dashboard or set its selectors in another call. |
 | dashboard 1001 changed while placing this widget; try again (`409 conflict`) | Another write placed a widget at the same spot; call again. |
 | the dashboard order changed while placing this dashboard; try again (`409 conflict`) | Another write moved or placed a dashboard at the same spot; call again. |
 | `404 not_found` | The dashboard, widget or project id does not exist; `list_dashboards`, `list_widgets` and `list_projects` name them. `widget_data` on an archived widget is a 404 too, and so is `remove_project_tab` or `move_project_tab` of a dashboard that is not a tab of the project. |

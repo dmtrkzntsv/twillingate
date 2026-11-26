@@ -100,8 +100,9 @@ func checkAccepts(c Component, t string) error {
 // exist, a source type that does not exist, a component/source-type pair
 // the component does not accept, a size outside the grid, props that do
 // not satisfy the component's schema, or — the most expensive check,
-// last — content its source type rejects.
-func (s *Service) validateWidget(ctx context.Context, comps map[string]Component, w store.Widget) error {
+// last — content its source type rejects. selectors are the names of the
+// selectors of the dashboard w goes on, which its sql may read.
+func (s *Service) validateWidget(ctx context.Context, comps map[string]Component, w store.Widget, selectors []string) error {
 	comp, err := componentNamed(comps, w.Component)
 	if err != nil {
 		return err
@@ -126,7 +127,7 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 	if err := checkRemoteTable(w); err != nil {
 		return err
 	}
-	return st.Validate(ctx, w.Source, comp)
+	return st.Validate(ctx, w.Source, comp, selectors)
 }
 
 // checkRemoteTable refuses a remote table (remoteTable) whose source is

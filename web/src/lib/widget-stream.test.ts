@@ -16,6 +16,7 @@ function widget(id: number, extra: Partial<Widget> = {}): Widget {
     source: { type: 'query', content: '{}' },
     follows_project: true,
     follows_range: true,
+    follows_selectors: [],
     ...extra,
   }
 }
@@ -260,6 +261,31 @@ describe('loadDashboard', () => {
     await vi.waitFor(() => expect(getSpy).toHaveBeenCalledWith(1, next))
     opened[0].send(event(1, { data: answer(1) }) + event(2, { data: answer(2) }) + done)
     await loading
+  })
+})
+
+describe('selectors', () => {
+  it('go on each stream item as an object, and on a lone GET', async () => {
+    const c = client()
+    const picked = { ...params, selectors: { deployment: ['cloud', 'a,b'] } }
+    const loading = loadDashboard(c, [{ widget: widget(1), params: picked }, { widget: widget(2), params }])
+    await streamOpened()
+    expect(opened[0].items).toEqual([
+      { widget_id: 1, ...picked },
+      { widget_id: 2, ...params },
+    ])
+    opened[0].send(event(1, { data: answer(1) }) + event(2, { data: answer(2) }) + done)
+    await loading
+    await loadDashboard(c, [{ widget: widget(3), params: picked }])
+    expect(getSpy).toHaveBeenCalledWith(3, picked)
+  })
+
+  it('key a widget per selection, so a pick never shows the unfiltered answer', () => {
+    const w = widget(1)
+    const cloud = widgetQuery(w, { ...params, selectors: { deployment: ['cloud'] } }).queryKey
+    expect(cloud).not.toEqual(keyOf(w))
+    expect(cloud).not.toEqual(widgetQuery(w, { ...params, selectors: { deployment: ['edge'] } }).queryKey)
+    expect(cloud).toEqual(widgetQuery(w, { ...params, selectors: { deployment: ['cloud'] } }).queryKey)
   })
 })
 

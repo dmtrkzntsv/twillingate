@@ -3,7 +3,9 @@ package reporting
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image/png"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,13 +30,17 @@ var archivePeriods = map[string]int{"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 // (1200×630 and 2400×1260), and whether its captions name the project and
 // the range (nil = yes). The web names only what the widget follows, so a
 // widget pinned to its own project or range is never captioned with the
-// dashboard's.
+// dashboard's. Selection is the values picked per selector of the
+// widget's dashboard when the picture was taken: the share keeps those of
+// the selectors the widget follows that have values, and its page
+// captions them; a name the dashboard lacks is refused.
 type NewShare struct {
 	WidgetID, ProjectID          int64
 	From, To                     string // YYYY-MM-DD
 	ArchiveAfter                 string // 7d|30d|90d|365d, project (with one) or never (without); "" = 30d
 	Image, Image2x               []byte
 	CaptionProject, CaptionRange *bool
+	Selection                    map[string][]string
 }
 
 // WidgetShareOut is a share as the surfaces above report it. ArchivedAt
@@ -55,9 +61,12 @@ type WidgetShareOut struct {
 	Title          string  `json:"title"`
 	CaptionProject bool    `json:"caption_project"`
 	CaptionRange   bool    `json:"caption_range"`
-	CreatedAt      string  `json:"created_at"`
-	ArchiveAt      *string `json:"archive_at"`
-	ArchivedAt     *string `json:"archived_at"`
+	// Selection is the values the share was made under, per selector name:
+	// only the selectors its widget follows that had values; {} at All.
+	Selection  map[string][]string `json:"selection"`
+	CreatedAt  string              `json:"created_at"`
+	ArchiveAt  *string             `json:"archive_at"`
+	ArchivedAt *string             `json:"archived_at"`
 }
 
 // archiveAtFor turns an archive_after value into archive_at: "" for no
@@ -146,17 +155,63 @@ func (s *Service) CreateWidgetShare(ctx context.Context, actor string, in NewSha
 	if title == "" {
 		title = w.Name
 	}
+	selection, err := s.shareSelection(ctx, w, in.Selection)
+	if err != nil {
+		return WidgetShareOut{}, err
+	}
 	row, err := s.st.InsertWidgetShare(ctx, store.NewWidgetShare{
 		ID: newShareID(), WidgetID: in.WidgetID, ProjectID: in.ProjectID,
 		From: in.From, To: in.To, Title: title,
 		Image: in.Image, Image2x: in.Image2x, ArchiveAt: archiveAt,
 		CaptionProject: in.ProjectID != 0 && (in.CaptionProject == nil || *in.CaptionProject),
 		CaptionRange:   in.CaptionRange == nil || *in.CaptionRange,
+		Selection:      selection,
 	}, store.AuditEntry{Actor: actor, Action: "widget_share.create"})
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
 	return s.shareOut(row), nil
+}
+
+// shareSelection is picked, made on w's dashboard, as a share keeps it:
+// JSON of the picked values of the selectors w follows (empty lists and
+// the rest left out), "" when there are none. A name the dashboard lacks
+// is refused.
+func (s *Service) shareSelection(ctx context.Context, w store.Widget, picked map[string][]string) (string, error) {
+	d, err := s.st.GetDashboard(ctx, w.DashboardID)
+	if err != nil {
+		return "", err
+	}
+	sels := storedSelectors(d.Selectors)
+	bound, err := bindSelection(d.ID, sels, picked)
+	if err != nil {
+		return "", err
+	}
+	followed := followedSelectors(w, sels)
+	kept := map[string][]string{}
+	for _, b := range bound {
+		if len(b.Values) > 0 && slices.Contains(followed, b.Name) {
+			kept[b.Name] = b.Values
+		}
+	}
+	if len(kept) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(kept)
+	if err != nil { // strings always marshal
+		panic(err)
+	}
+	return string(b), nil
+}
+
+// parseShareSelection reads a share's stored Selection: "" and text that
+// does not parse read as none, an empty non-nil map.
+func parseShareSelection(raw string) map[string][]string {
+	out := map[string][]string{}
+	if raw != "" && json.Unmarshal([]byte(raw), &out) != nil || out == nil {
+		return map[string][]string{}
+	}
+	return out
 }
 
 // ListWidgetShares lists the shares of widgetID (0 = every widget) in
@@ -267,6 +322,7 @@ func (s *Service) shareOut(r store.WidgetShare) WidgetShareOut {
 		ID: r.ID, URL: url, ImageURL: url + ".png", Image2xURL: url + "@2x.png",
 		From: r.From, To: r.To, Title: r.Title, CreatedAt: r.CreatedAt,
 		CaptionProject: r.CaptionProject, CaptionRange: r.CaptionRange,
+		Selection: parseShareSelection(r.Selection),
 	}
 	if r.WidgetID != 0 {
 		out.WidgetID = &r.WidgetID

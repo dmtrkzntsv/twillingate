@@ -3,6 +3,7 @@ package reporting
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,11 +16,14 @@ import (
 )
 
 // Params is what a widget's source may read at load time: the dashboard's
-// selected project and date range. A source's content declares which of
-// these it actually uses (Follows); Load binds only those.
+// selected project and date range, and its selectors. A source's content
+// declares which of the project and range it actually uses (Follows);
+// Load binds only those. A sql source may read the name of each of
+// Selectors, bound to its values (the empty list for All).
 type Params struct {
 	ProjectID int64
 	From, To  string
+	Selectors []BoundSelector
 }
 
 // SourceType is one kind of widget content: SQL over the event files, a
@@ -31,8 +35,10 @@ type SourceType interface {
 	// Validate refuses content that does not fit c: a sql source checks
 	// it against the event files (params, shape, sample rows), a query
 	// source its columns, from the query alone; refusals are
-	// store.ErrInvalid.
-	Validate(ctx context.Context, content string, c Component) error
+	// store.ErrInvalid. selectors are the names of the selectors of the
+	// widget's dashboard, which sql may read beside :project, :from and
+	// :to.
+	Validate(ctx context.Context, content string, c Component, selectors []string) error
 	// Load runs content and returns the value a widget's component
 	// renders: readsql.Result for sql and query, Markdown for md.
 	Load(ctx context.Context, content string, p Params) (any, error)
@@ -95,7 +101,7 @@ func (mdSource) Name() string                       { return "md" }
 func (mdSource) Cacheable() bool                    { return false }
 func (mdSource) Follows(string) (project, rng bool) { return false, false }
 
-func (mdSource) Validate(_ context.Context, content string, _ Component) error {
+func (mdSource) Validate(_ context.Context, content string, _ Component, _ []string) error {
 	if strings.TrimSpace(content) == "" {
 		return store.Refuse(store.ErrInvalid, "markdown text is empty")
 	}
@@ -108,7 +114,7 @@ func (mdSource) Load(_ context.Context, content string, _ Params) (any, error) {
 
 // sqlSource is the sql SourceType: a SELECT in DuckDB SQL run on the
 // event files by the external SQL engine, parameterized on at most
-// :project, :from and :to.
+// :project, :from, :to and its dashboard's selectors.
 type sqlSource struct {
 	eng        *sqlEngine
 	sampleRows bool
@@ -125,10 +131,11 @@ func (s *sqlSource) clock() time.Time {
 	return time.Now()
 }
 
-// allowedParams is the closed set of named parameters a widget's SQL may
-// use: the dashboard's selected project and date range. Anything else —
-// including a positional ? — is refused, since a widget's SQL has no
-// other input to bind.
+// allowedParams are the named parameters any widget's SQL may use: the
+// dashboard's selected project and date range. Beside them it may read
+// its dashboard's selectors (checkSQLParams); anything else, a
+// positional ? included, is refused, since a widget's SQL has no other
+// input to bind.
 var allowedParams = map[string]bool{":project": true, ":from": true, ":to": true}
 
 func (s *sqlSource) Follows(content string) (project, rng bool) { return sqlFollows(content) }
@@ -152,10 +159,11 @@ func sqlFollows(content string) (project, rng bool) {
 }
 
 // checkSQLParams refuses content sqlbind's scanner refuses, empty
-// content, and any named parameter outside allowedParams, returning the
+// content, and any named parameter outside allowedParams and selectors
+// (names, without the colon), naming every such one, and returns the
 // ones it uses. Shared by a widget's Validate, Load and Preview, so they
 // refuse the same SQL the same way.
-func checkSQLParams(content string) ([]string, error) {
+func checkSQLParams(content string, selectors []string) ([]string, error) {
 	params, err := sqlbind.Params(content)
 	if err != nil {
 		return nil, refuseText(err)
@@ -163,28 +171,59 @@ func checkSQLParams(content string) ([]string, error) {
 	if strings.TrimSpace(sqlbind.Trim(content)) == "" {
 		return nil, store.Refuse(store.ErrInvalid, "sql must not be empty")
 	}
+	var unknown []string
 	for _, p := range params {
-		if !allowedParams[p] {
-			return nil, store.Refuse(store.ErrInvalid,
-				"sql uses %s; widgets get only :project, :from and :to", p)
+		if !allowedParams[p] && !slices.Contains(selectors, strings.TrimPrefix(p, ":")) {
+			unknown = append(unknown, p)
 		}
 	}
-	return params, nil
+	if len(unknown) == 0 {
+		return params, nil
+	}
+	if len(selectors) == 0 {
+		return nil, store.Refuse(store.ErrInvalid,
+			"sql uses %s; widgets get only :project, :from and :to", joinAnd(unknown))
+	}
+	names := make([]string, len(selectors))
+	for i, n := range selectors {
+		names[i] = ":" + n
+	}
+	what := "selector"
+	if len(names) > 1 {
+		what = "selectors"
+	}
+	return nil, store.Refuse(store.ErrInvalid,
+		"sql uses %s; widgets get only :project, :from and :to, and this dashboard's %s %s", joinAnd(unknown), what, joinAnd(names))
+}
+
+// boundNames is the names of sels, for checkSQLParams on a load.
+func boundNames(sels []BoundSelector) []string {
+	out := make([]string, len(sels))
+	for i, s := range sels {
+		out[i] = s.Name
+	}
+	return out
 }
 
 // bindSQL binds p's values to the parameters content uses (params, from
-// checkSQLParams) and returns the bound query: scoped to p's project when
+// checkSQLParams) and returns the bound query, each of p's selectors a
+// VARCHAR[] of its values (the empty list for All, never NULL): scoped
+// to p's project when
 // content reads :project, even to one with no rows (project 0 among them,
 // which reads none), and otherwise over every project, as a widget that
 // never names one read on SQLite (Decision 2). Either way it reads only
 // the eight tables (confine): the save, the preview and every run of a
 // widget refuse the same SQL.
 func bindSQL(content string, params []string, p Params) (boundSQL, error) {
-	bound, args, err := sqlbind.Bind(content, map[string]sqlbind.Value{
+	vals := map[string]sqlbind.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(p.ProjectID, 10)},
 		":from":    {Type: "DATE", Text: p.From},
 		":to":      {Type: "DATE", Text: p.To},
-	})
+	}
+	for _, s := range p.Selectors {
+		vals[":"+s.Name] = sqlbind.Value{Type: sqlbind.ListType, Text: sqlbind.ListText(s.Values)}
+	}
+	bound, args, err := sqlbind.Bind(content, vals)
 	if err != nil {
 		return boundSQL{}, refuseText(err)
 	}
@@ -198,7 +237,8 @@ func bindSQL(content string, params []string, p Params) (boundSQL, error) {
 	return q, nil
 }
 
-// Validate checks content on the sample week. SQL that reads :project
+// Validate checks content on the sample week, with every selector at
+// All (the empty list). SQL that reads :project
 // is tried on each live project with event files in turn
 // (sampleProjects), the sample project first, and passes on the first
 // it runs on: a scoped query sees only that project's attr_<key>
@@ -209,8 +249,8 @@ func bindSQL(content string, params []string, p Params) (boundSQL, error) {
 // other error end the check there, so one widget costs at most one
 // query run per live project, and a timeout ends it as one skip. When
 // every project refuses it, the sample project's refusal is returned.
-func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
-	params, err := checkSQLParams(content)
+func (s *sqlSource) Validate(ctx context.Context, content string, c Component, selectors []string) error {
+	params, err := checkSQLParams(content, selectors)
 	if err != nil {
 		return err
 	}
@@ -223,6 +263,10 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 	// :from or :to, not only the sampleRows run below.
 	needsProject, needsRange := s.Follows(content)
 	var p Params
+	// Every selector at All: the empty list.
+	for _, n := range selectors {
+		p.Selectors = append(p.Selectors, BoundSelector{Name: n})
+	}
 	if needsRange {
 		now := s.clock().UTC()
 		p.From = now.AddDate(0, 0, -6).Format("2006-01-02")
@@ -294,7 +338,7 @@ func (s *sqlSource) validateOn(ctx context.Context, content string, params []str
 }
 
 func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, error) {
-	params, err := checkSQLParams(content)
+	params, err := checkSQLParams(content, boundNames(p.Selectors))
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +391,7 @@ func (e pagingRefusal) Unwrap() error { return e.error }
 // of the widget's SQL itself), the page, and the two counts when the
 // page has no row to carry them.
 func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error) {
-	params, err := checkSQLParams(content)
+	params, err := checkSQLParams(content, boundNames(p.Selectors))
 	if err != nil {
 		return readsql.PageResult{}, err
 	}

@@ -384,8 +384,10 @@ func CheckUserWidgets(ctx context.Context, st Store, sql SQL, opt Options) ([]Wi
 		return nil, err
 	}
 	live := map[int64]bool{}
+	selectors := map[int64][]string{} // each dashboard's, which its widgets' sql may read
 	for _, d := range ds {
 		live[d.ID] = d.Owner == store.OwnerUser && d.ArchivedAt == ""
+		selectors[d.ID] = selectorNames(storedSelectors(d.Selectors))
 	}
 	ws, err := st.ListWidgets(ctx, 0)
 	if err != nil {
@@ -398,7 +400,7 @@ func CheckUserWidgets(ctx context.Context, st Store, sql SQL, opt Options) ([]Wi
 		if !live[w.DashboardID] || w.ArchivedAt != "" || w.SourceType != "sql" || !ok {
 			continue
 		}
-		err := svc.sources["sql"].Validate(ctx, w.Source, comp)
+		err := svc.sources["sql"].Validate(ctx, w.Source, comp, selectors[w.DashboardID])
 		if cause := resourceCause(err); cause != nil && skipsWidget(cause) {
 			skips++
 		} else {

@@ -23,6 +23,8 @@ type widgetStreamItem struct {
 	From      string `json:"from,omitempty" jsonschema:"YYYY-MM-DD; with to, required when the widget follows the range switcher; ignored otherwise"`
 	To        string `json:"to,omitempty" jsonschema:"YYYY-MM-DD, at most 365 days after from; a day after today is clamped to today"`
 	Fresh     bool   `json:"fresh,omitempty" jsonschema:"true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old"`
+	// Selectors is an object here, not GET's JSON text: the body is JSON.
+	Selectors map[string][]string `json:"selectors,omitempty" jsonschema:"the values picked per selector of this widget's dashboard, name to a list of values; an absent name or an empty list is All; a name its dashboard does not declare is this widget's refusal"`
 }
 
 // widgetEvent is one widget's event in the stream: its GET body as data,
@@ -68,7 +70,7 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 		}
 		reqs := make([]reporting.WidgetRequest, len(in.Widgets))
 		for i, x := range in.Widgets {
-			reqs[i] = reporting.WidgetRequest{WidgetID: x.WidgetID, ProjectID: x.ProjectID, From: x.From, To: x.To, Fresh: x.Fresh}
+			reqs[i] = reporting.WidgetRequest{WidgetID: x.WidgetID, ProjectID: x.ProjectID, From: x.From, To: x.To, Fresh: x.Fresh, Selectors: x.Selectors}
 		}
 
 		ctx := withActor(req.Context(), "api")

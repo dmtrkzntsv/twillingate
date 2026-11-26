@@ -207,12 +207,13 @@ async function getAll(pending: Pending[]): Promise<void> {
 /** The part of a widget's query a stream takes: its selection, never a remote table's view. */
 export function streamParams(params: WidgetDataQuery): Omit<WidgetStreamItem, 'widget_id'> {
   // Only what is set, so a widget's own GET asks for exactly what its card would.
-  const { project_id, from, to, fresh } = params
+  const { project_id, from, to, fresh, selectors } = params
   return {
     ...(project_id !== undefined ? { project_id } : {}),
     ...(from !== undefined ? { from } : {}),
     ...(to !== undefined ? { to } : {}),
     ...(fresh ? { fresh } : {}),
+    ...(selectors !== undefined ? { selectors } : {}),
   }
 }
 

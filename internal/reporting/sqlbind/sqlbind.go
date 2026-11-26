@@ -6,6 +6,10 @@
 // shape check, a remote table's page), not the files: the engine is what
 // refuses anything but one SELECT, and what keeps it on the tables it is
 // given.
+//
+// ListText's encoding relies on the engine's list cast from VARCHAR: '[' and
+// ']' around elements separated by ',', each optionally double-quoted, with
+// a backslash escaping the next character inside the quotes.
 package sqlbind
 
 import (
@@ -60,12 +64,41 @@ func Params(q string) ([]string, error) {
 
 // Value is what Bind puts in place of one :name: Text, bound as a string
 // argument and cast to Type (BIGINT, DATE, VARCHAR…) in the SQL, since
-// the engine's protocol binds strings only.
+// the engine's protocol binds strings only. A list is the one non-bare
+// Type, ListType, with its Text from ListText.
 type Value struct{ Type, Text string }
 
 // typeName is what Bind accepts as a Value's Type: a bare type name, so
 // the text spliced around the bound parameter is only ever a cast.
 var typeName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
+
+// ListType is the Type of a Value that carries a list of strings, bound as
+// text and cast to VARCHAR[].
+const ListType = "VARCHAR[]"
+
+// ListText returns the text that CAST(… AS VARCHAR[]) reads back as exactly
+// values: every element double-quoted, with '"' and '\' backslash-escaped,
+// so padding, commas, brackets and quotes survive. No values give the
+// empty list.
+func ListText(values []string) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, v := range values {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('"')
+		for j := 0; j < len(v); j++ {
+			if v[j] == '"' || v[j] == '\\' {
+				b.WriteByte('\\')
+			}
+			b.WriteByte(v[j])
+		}
+		b.WriteByte('"')
+	}
+	b.WriteByte(']')
+	return b.String()
+}
 
 // Bind rewrites each :name of q into CAST($tw_name AS Type), with the
 // Value vals has for it (keyed by the name, sigil included), and returns
@@ -89,7 +122,7 @@ func Bind(q string, vals map[string]Value) (string, map[string]string, error) {
 		if !ok {
 			return "", nil, fmt.Errorf("%w: parameter %s has no value", ErrRefused, o.name)
 		}
-		if !typeName.MatchString(v.Type) {
+		if v.Type != ListType && !typeName.MatchString(v.Type) {
 			return "", nil, fmt.Errorf("%w: %q is not a type name for %s", ErrRefused, v.Type, o.name)
 		}
 		arg := "tw_" + o.name[1:]

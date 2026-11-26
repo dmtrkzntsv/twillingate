@@ -230,6 +230,7 @@ describe('useDashboardActions', () => {
       widgets: [],
       follows_project: true,
       follows_range: true,
+      selectors: [],
       tabs: [],
       sidebar: true,
       project_tab: false,

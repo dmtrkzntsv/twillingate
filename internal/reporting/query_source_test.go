@@ -65,7 +65,7 @@ func TestQuerySourceLoads(t *testing.T) {
 	writeCountries(t, files)
 	var asked []int64
 	src := querySources(t, files, &asked)["query"]
-	if err := src.Validate(context.Background(), countryBars, oneComponent(t, queryBarList)); err != nil {
+	if err := src.Validate(context.Background(), countryBars, oneComponent(t, queryBarList), nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if p, r := src.Follows(countryBars); !p || !r {
@@ -108,7 +108,7 @@ func TestQuerySourceStatPrevious(t *testing.T) {
 	content := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors","as":"value"}],"compare":"previous"},"rename":{"previous_value":"previous"}}`
 	src := querySources(t, files, nil)["query"]
 	stat := oneComponent(t, queryStat)
-	if err := src.Validate(context.Background(), content, stat); err != nil {
+	if err := src.Validate(context.Background(), content, stat, nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	got, err := src.Load(context.Background(), content, Params{ProjectID: 1, From: "2026-10-21", To: "2026-10-21"})
@@ -122,7 +122,7 @@ func TestQuerySourceStatPrevious(t *testing.T) {
 
 	// Without the rename, previous_value is no input of stat.
 	bare := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors","as":"value"}],"compare":"previous"}}`
-	wantRefusal(t, src.Validate(context.Background(), bare, stat), store.ErrInvalid, "previous_value is not an input of stat")
+	wantRefusal(t, src.Validate(context.Background(), bare, stat, nil), store.ErrInvalid, "previous_value is not an input of stat")
 }
 
 func TestQuerySourceValidate(t *testing.T) {
@@ -174,7 +174,7 @@ func TestQuerySourceValidate(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			wantRefusal(t, svc.validateWidget(context.Background(), comps, c.w), store.ErrInvalid, c.msg)
+			wantRefusal(t, svc.validateWidget(context.Background(), comps, c.w, nil), store.ErrInvalid, c.msg)
 		})
 	}
 
@@ -188,18 +188,18 @@ func TestQuerySourceValidate(t *testing.T) {
 		`{"query":{"kind":"retention","output":"curve","identified_by":"user"},"rename":{"retention":"value","offset":"previous"}}`,
 		`{"query":{"kind":"retention","output":"milestones","identified_by":"install","milestones":[7,30]},"rename":{"d7":"value","d30":"previous"}}`,
 	} {
-		if err := svc.validateWidget(context.Background(), comps, widget("stat", "{}", content)); err != nil {
+		if err := svc.validateWidget(context.Background(), comps, widget("stat", "{}", content), nil); err != nil {
 			t.Errorf("%s: %v", content, err)
 		}
 	}
 	// bar_list's label is text, which takes any column.
 	if err := svc.validateWidget(context.Background(), comps, widget("bar_list", "{}",
-		`{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["day"]},"rename":{"day":"label"}}`)); err != nil {
+		`{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["day"]},"rename":{"day":"label"}}`), nil); err != nil {
 		t.Errorf("day into text: %v", err)
 	}
 
 	// A local table takes whatever the query returns.
-	if err := svc.validateWidget(context.Background(), comps, widget("table", `{"mode":"local"}`, `{"query":`+stat+`}`)); err != nil {
+	if err := svc.validateWidget(context.Background(), comps, widget("table", `{"mode":"local"}`, `{"query":`+stat+`}`), nil); err != nil {
 		t.Errorf("local table: %v", err)
 	}
 }
@@ -221,7 +221,7 @@ func TestQuerySourceWithoutNative(t *testing.T) {
 	_, files := newTestStoreAndFiles(t, 1000)
 	src := newSources(files.eng(), false, time.Now, Options{QueryTimeout: files.timeout, QueryMaxRows: files.maxRows})["query"]
 	// Validating needs no engine: the columns come from the query.
-	if err := src.Validate(context.Background(), countryBars, oneComponent(t, queryBarList)); err != nil {
+	if err := src.Validate(context.Background(), countryBars, oneComponent(t, queryBarList), nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	_, err := src.Load(context.Background(), countryBars, countryParams)
@@ -352,7 +352,7 @@ func TestQuerySourceLabels(t *testing.T) {
 	bars := oneComponent(t, queryBarList)
 	content := `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},` +
 		`"rename":{"country":"label","actors":"value"},"labels":{"label":{"DE":"Germany","US":"United States"}}}`
-	if err := src.Validate(context.Background(), content, bars); err != nil {
+	if err := src.Validate(context.Background(), content, bars, nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	got, err := src.Load(context.Background(), content, countryParams)
@@ -374,7 +374,7 @@ func TestQuerySourceLabels(t *testing.T) {
 			"labels.actors: a number column takes no labels"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			wantRefusal(t, src.Validate(context.Background(), c.content, table), store.ErrInvalid, c.msg)
+			wantRefusal(t, src.Validate(context.Background(), c.content, table, nil), store.ErrInvalid, c.msg)
 		})
 	}
 }
@@ -388,7 +388,7 @@ func TestQuerySourceLabelsKeepRows(t *testing.T) {
 	src := querySources(t, files, nil)["query"]
 	content := `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},` +
 		`"rename":{"country":"label","actors":"value"},"labels":{"label":{"DE":"Europe","FR":"Europe","":"Unknown"}}}`
-	if err := src.Validate(context.Background(), content, oneComponent(t, queryBarList)); err != nil {
+	if err := src.Validate(context.Background(), content, oneComponent(t, queryBarList), nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	got, err := src.Load(context.Background(), content, countryParams)
@@ -413,7 +413,7 @@ func TestQuerySourceColumns(t *testing.T) {
 	bars, stat := oneComponent(t, queryBarList), oneComponent(t, queryStat)
 	breakdown := `{"kind":"breakdown","table":"events","metrics":[{"op":"count"},{"op":"actors"}],"dimensions":["country"]}`
 	content := `{"query":` + breakdown + `,"rename":{"country":"label"},"columns":["actors","label"]}`
-	if err := src.Validate(context.Background(), content, oneComponent(t, queryTable)); err != nil {
+	if err := src.Validate(context.Background(), content, oneComponent(t, queryTable), nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	got, err := src.Load(context.Background(), content, countryParams)
@@ -427,12 +427,12 @@ func TestQuerySourceColumns(t *testing.T) {
 
 	// The component reads the picked columns: dropping count lets bar_list
 	// take the rest; picking count for a number checks its type.
-	if err := src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label","actors":"value"},"columns":["label","value"]}`, bars); err != nil {
+	if err := src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label","actors":"value"},"columns":["label","value"]}`, bars, nil); err != nil {
 		t.Errorf("bar_list: %v", err)
 	}
-	wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"value"},"columns":["value"]}`, stat),
+	wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"value"},"columns":["value"]}`, stat, nil),
 		store.ErrInvalid, "stat.value: the query's column is text, not number")
-	wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label","actors":"value"},"columns":["label"]}`, bars),
+	wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label","actors":"value"},"columns":["label"]}`, bars, nil),
 		store.ErrInvalid, "bar_list needs value (number); columns are label")
 	for _, c := range []struct{ name, columns, msg string }{
 		{"empty", `[]`, "columns: name at least one; omit it to keep every column"},
@@ -441,7 +441,7 @@ func TestQuerySourceColumns(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label"},"columns":`+c.columns+`}`,
-				oneComponent(t, queryTable)), store.ErrInvalid, c.msg)
+				oneComponent(t, queryTable), nil), store.ErrInvalid, c.msg)
 		})
 	}
 
@@ -495,7 +495,7 @@ func TestQuerySourceFixedProject(t *testing.T) {
 	var asked []int64
 	src := querySources(t, files, &asked)["query"]
 	fixed := `{"project_id":1,` + countryBars[1:]
-	if err := src.Validate(context.Background(), fixed, oneComponent(t, queryBarList)); err != nil {
+	if err := src.Validate(context.Background(), fixed, oneComponent(t, queryBarList), nil); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if p, r := src.Follows(fixed); p || !r {
@@ -512,7 +512,7 @@ func TestQuerySourceFixedProject(t *testing.T) {
 	if !reflect.DeepEqual(asked, []int64{1}) {
 		t.Errorf("rules asked for %v, want [1]", asked)
 	}
-	err = src.Validate(context.Background(), `{"project_id":-1,`+countryBars[1:], oneComponent(t, queryBarList))
+	err = src.Validate(context.Background(), `{"project_id":-1,`+countryBars[1:], oneComponent(t, queryBarList), nil)
 	if !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "project_id") {
 		t.Errorf("Validate project_id -1 = %v", err)
 	}

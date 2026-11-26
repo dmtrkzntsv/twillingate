@@ -33,13 +33,13 @@ const dashboardCols = `d.id, d.owner, d.title, d.sort_key, d.group_id, COALESCE(
 	d.created_at, d.updated_at, COALESCE(d.archived_at,''),
 	(SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id=d.id AND w.archived_at IS NULL),
 	COALESCE((SELECT g.title FROM dashboard_groups g WHERE g.group_id=d.group_id),''),
-	d.sidebar, d.project_tab`
+	d.sidebar, d.project_tab, d.selectors`
 
 func scanDashboard(s rowScanner) (store.Dashboard, error) {
 	var d store.Dashboard
 	err := s.Scan(&d.ID, &d.Owner, &d.Title, &d.SortKey, &d.GroupID, &d.LastProjectID,
 		&d.CreatedAt, &d.UpdatedAt,
-		&d.ArchivedAt, &d.LiveWidgets, &d.GroupTitle, &d.Sidebar, &d.ProjectTab)
+		&d.ArchivedAt, &d.LiveWidgets, &d.GroupTitle, &d.Sidebar, &d.ProjectTab, &d.Selectors)
 	return d, err
 }
 
@@ -176,16 +176,16 @@ func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (
 	var err error
 	if dash.ID != 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(id, owner, title, sort_key, group_id, last_project_id, sidebar, project_tab)
-			VALUES (?,?,?,?,?,NULLIF(?,0),?,?)`,
+			(id, owner, title, sort_key, group_id, last_project_id, sidebar, project_tab, selectors)
+			VALUES (?,?,?,?,?,NULLIF(?,0),?,?,?)`,
 			dash.ID, dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
-			dash.Sidebar, dash.ProjectTab)
+			dash.Sidebar, dash.ProjectTab, selectorsText(dash.Selectors))
 	} else {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(owner, title, sort_key, group_id, last_project_id, sidebar, project_tab)
-			VALUES (?,?,?,?,NULLIF(?,0),?,?)`,
+			(owner, title, sort_key, group_id, last_project_id, sidebar, project_tab, selectors)
+			VALUES (?,?,?,?,NULLIF(?,0),?,?,?)`,
 			dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
-			dash.Sidebar, dash.ProjectTab)
+			dash.Sidebar, dash.ProjectTab, selectorsText(dash.Selectors))
 	}
 	if err != nil {
 		return 0, mapDashboardConflict(dash, err)
@@ -194,6 +194,14 @@ func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (
 		return dash.ID, nil
 	}
 	return res.LastInsertId()
+}
+
+// selectorsText is what the selectors column stores: no selectors is "[]".
+func selectorsText(s string) string {
+	if s == "" {
+		return "[]"
+	}
+	return s
 }
 
 func mapDashboardConflict(dash store.Dashboard, err error) error {
@@ -220,13 +228,13 @@ func mapMoveDashboardConflict(k store.DashboardKey, err error) error {
 	return fmt.Errorf("move dashboard %d: %w", k.ID, err)
 }
 
-// UpdateDashboard updates title, sort_key, group_id and sidebar: the
-// caller passes the row it read, with any change.
+// UpdateDashboard updates title, sort_key, group_id, sidebar and selectors:
+// the caller passes the row it read, with any change.
 func (d *DB) UpdateDashboard(ctx context.Context, dash store.Dashboard, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, sidebar=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.Sidebar, dash.ID)
+			`UPDATE dashboards SET title=?, sort_key=?, group_id=?, sidebar=?, selectors=?, updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+			 WHERE id=?`, dash.Title, dash.SortKey, dash.GroupID, dash.Sidebar, selectorsText(dash.Selectors), dash.ID)
 		if err != nil {
 			return mapDashboardConflict(dash, err)
 		}

@@ -33,6 +33,7 @@ type Dashboard struct {
 	LiveWidgets           int    // filled by reads: widgets not archived
 	Sidebar               bool   // in the sidebar (migration 032); a built-in's Hide sets it false. A user row inserted or set with it false is archived by 032's trigger
 	ProjectTab            bool   // a new project gets this dashboard as a tab (032 D3); built-ins only, from the release
+	Selectors             string // JSON array of the dashboard's selectors (migration 051); "[]" = none, and an empty value is written as "[]"
 }
 
 // DashboardKey is one dashboard row's place: which group it belongs to
@@ -92,6 +93,7 @@ type WidgetShare struct {
 	CreatedAt      string // 2006-01-02T15:04:05Z
 	ArchiveAt      string // "" = no date: the project's lifetime, or never with no project
 	ArchivedAt     string // "" = not archived by hand or by the daily pass
+	Selection      string // JSON object of the selector values the page was made under (migration 051); "" = All
 }
 
 // NewWidgetShare is what InsertWidgetShare writes; the project's name is
@@ -103,6 +105,7 @@ type NewWidgetShare struct {
 	From, To, Title     string
 	Image, Image2x      []byte
 	ArchiveAt           string // "" = no date
+	Selection           string // JSON object of the selector values; "" = All
 	// CaptionProject and CaptionRange: whether the page names the project
 	// and the range, which it does only for what the widget follows.
 	CaptionProject, CaptionRange bool

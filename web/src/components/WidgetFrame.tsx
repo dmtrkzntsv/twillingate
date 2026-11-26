@@ -7,6 +7,8 @@ interface Props {
   titleSlot?: ReactNode
   /** Beside the title, e.g. the "partial" badge. */
   badge?: ReactNode
+  /** Under the title, one muted line that gives way with an ellipsis, e.g. what the card is not filtered by. */
+  note?: string
   /** Top-right controls, e.g. refresh. */
   actions?: ReactNode
   /** How many 28px controls `actions` holds at most (1 to 3): the title leaves room for them. */
@@ -19,7 +21,7 @@ interface Props {
 const titleRoom = ['', 'pr-8', 'pr-16', 'pr-24']
 
 /** A widget's card: the title row, the body, and controls in the corners. */
-export default function WidgetFrame({ title, titleSlot, badge, actions, slots = 1, corner, children }: Props) {
+export default function WidgetFrame({ title, titleSlot, badge, note, actions, slots = 1, corner, children }: Props) {
   return (
     <Card
       data-slot="widget-card"
@@ -30,6 +32,11 @@ export default function WidgetFrame({ title, titleSlot, badge, actions, slots = 
           {titleSlot || (title && <h3 className="truncate text-sm font-medium text-muted-foreground">{title}</h3>)}
           {badge}
         </div>
+      )}
+      {note && (
+        <p data-slot="widget-note" title={note} className={`min-w-0 truncate text-xs text-muted-foreground ${actions ? titleRoom[slots] : ''}`}>
+          {note}
+        </p>
       )}
       <div data-slot="widget-body" className="relative min-h-0 flex-1 overflow-auto">
         {children}

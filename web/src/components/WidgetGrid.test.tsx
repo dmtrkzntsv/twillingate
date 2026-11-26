@@ -50,6 +50,7 @@ function note(id: number, over: Partial<Widget> = {}): Widget {
     source: { type: 'md', content: 'text' },
     follows_project: false,
     follows_range: false,
+    follows_selectors: [],
     ...over,
   }
 }
