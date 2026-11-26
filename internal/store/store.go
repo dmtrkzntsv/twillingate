@@ -247,8 +247,9 @@ type Store interface {
 	ListWidgets(ctx context.Context, dashboardID int64) ([]Widget, error)
 	GetWidget(ctx context.Context, id int64) (Widget, error)
 	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, a AuditEntry) (int64, error)
-	// UpdateDashboard writes d's title, sort_key, group_id and sidebar: a
-	// row read from the store keeps its sidebar.
+	// UpdateDashboard writes d's title, sort_key, group_id, sidebar and
+	// selectors (an empty Selectors is written as "[]"): a row read from the
+	// store keeps its sidebar and selectors.
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
 	// MoveDashboards rewrites group_id and sort_key of every row in ks in
