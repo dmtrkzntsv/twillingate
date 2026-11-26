@@ -127,7 +127,7 @@ func (s *Service) SelectorValues(ctx context.Context, in SelectorValuesIn) ([]Se
 
 // selectorValueList is counts as the answer: the values containing search
 // (in any case), by count descending then value, cut to 100, then each of
-// picked that is missing with a count of 0, in picked's order.
+// picked that is missing with its count (0 when absent), in picked's order.
 func selectorValueList(counts map[string]int64, search string, picked []string) []SelectorValue {
 	search = strings.ToLower(search)
 	out := []SelectorValue{}
@@ -152,7 +152,7 @@ func selectorValueList(counts map[string]int64, search string, picked []string) 
 	for _, v := range picked {
 		if v != "" && !listed[v] {
 			listed[v] = true
-			out = append(out, SelectorValue{Value: v})
+			out = append(out, SelectorValue{Value: v, Count: counts[v]})
 		}
 	}
 	return out

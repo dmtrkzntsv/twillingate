@@ -80,7 +80,7 @@ export function selectorProjects(widgets: readonly Pick<Widget, 'source'>[], sho
     if (source.type !== 'query') continue
     try {
       const id = (JSON.parse(source.content) as { project_id?: unknown } | null)?.project_id
-      if (typeof id === 'number') ids.add(id)
+      if (typeof id === 'number' && id > 0) ids.add(id)
     } catch {
       // A query that does not parse fixes no project.
     }

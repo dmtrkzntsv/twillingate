@@ -101,6 +101,11 @@ describe('selectorProjects', () => {
     expect(selectorProjects([query(), widget({})], undefined, live)).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3])
   })
 
+  it('does not add a project_id of zero, which the backend treats as omitted', () => {
+    const zero = widget({ source: { type: 'query', content: '{"project_id": 0, "query": {"kind": "stat"}}' } })
+    expect(selectorProjects([zero], 7, live)).toEqual([7])
+  })
+
   it('passes over a query it cannot read', () => {
     expect(selectorProjects([widget({ source: { type: 'query', content: '{' } })], 3, live)).toEqual([3])
   })

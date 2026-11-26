@@ -117,7 +117,7 @@ func TestSelectorValuesSearch(t *testing.T) {
 }
 
 // TestSelectorValuesKeepsPicked: a picked value the range lacks is
-// appended with count 0, even when the search excludes it; a picked value
+// appended with its count (0 when absent), even when the search excludes it; a picked value
 // the answer has is not repeated.
 func TestSelectorValuesKeepsPicked(t *testing.T) {
 	svc, _, d := valuesSetup(t, map[int64][][]string{1: {{"cloud", "3"}, {"eu", "1"}}})
@@ -131,8 +131,27 @@ func TestSelectorValuesKeepsPicked(t *testing.T) {
 		t.Errorf("values = %v, want %v", got, want)
 	}
 	in.Search = "cl"
-	if got, _ = svc.SelectorValues(context.Background(), in); !reflect.DeepEqual(got, []SelectorValue{{"cloud", 3}, {"gone", 0}, {"eu", 0}}) {
+	if got, _ = svc.SelectorValues(context.Background(), in); !reflect.DeepEqual(got, []SelectorValue{{"cloud", 3}, {"gone", 0}, {"eu", 1}}) {
 		t.Errorf("searched values = %v", got)
+	}
+}
+
+// TestSelectorValuesPickedBelowCap: a picked value that ranks past the
+// 100 cut keeps its real count.
+func TestSelectorValuesPickedBelowCap(t *testing.T) {
+	var rows [][]string
+	for i := range 150 {
+		rows = append(rows, []string{fmt.Sprintf("v%03d", i), strconv.Itoa(1000 - i)})
+	}
+	svc, _, d := valuesSetup(t, map[int64][][]string{1: rows})
+	in := valuesIn(d, 1)
+	in.Picked = []string{"v120"}
+	got, err := svc.SelectorValues(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := got[len(got)-1]; len(got) != 101 || last != (SelectorValue{"v120", 880}) {
+		t.Errorf("%d values, last %v, want 101 ending in {v120 880}", len(got), last)
 	}
 }
 
