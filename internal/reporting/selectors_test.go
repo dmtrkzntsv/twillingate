@@ -84,13 +84,14 @@ func TestParseSelectors(t *testing.T) {
 }
 
 // TestFollowedSelectors: a query widget follows a selector when its
-// table takes the filter (sessions only the UTM and referrer columns,
-// identities none), a sql widget the selectors whose :name it reads, md
+// table takes the filter (sessions only the UTM and referrer columns and
+// host, through entry_host; identities none), a sql widget the selectors whose :name it reads, md
 // none.
 func TestFollowedSelectors(t *testing.T) {
 	sels := []Selector{
 		{Name: "deployment", Label: "Deployment", Column: "attr_deployment"},
 		{Name: "campaign", Label: "Campaign", Column: "utm_campaign"},
+		{Name: "host", Label: "Host", Column: "host"},
 	}
 	query := func(table string) store.Widget {
 		q := native.Query{Kind: "stat", Table: table, Metrics: []native.Metric{{Op: "count"}}}
@@ -116,9 +117,9 @@ func TestFollowedSelectors(t *testing.T) {
 		w    store.Widget
 		want []string
 	}{
-		"events":       {query("events"), []string{"deployment", "campaign"}},
-		"views":        {query("views"), []string{"deployment", "campaign"}},
-		"sessions":     {query("sessions"), []string{"campaign"}},
+		"events":       {query("events"), []string{"deployment", "campaign", "host"}},
+		"views":        {query("views"), []string{"deployment", "campaign", "host"}},
+		"sessions":     {query("sessions"), []string{"campaign", "host"}},
 		"identities":   {query("identities"), []string{}},
 		"measures":     {query("measures"), measures},
 		"sql":          {store.Widget{SourceType: "sql", Source: "SELECT count(*) AS value FROM events WHERE len(:deployment) = 0 AND day >= :from"}, []string{"deployment"}},

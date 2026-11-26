@@ -40,10 +40,29 @@ var selectorName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 // the project and range switchers bind, with what owns each.
 var switcherParams = map[string]string{"project": "the project switcher's", "from": "the date range's", "to": "the date range's"}
 
-// sessionSelectorColumns are the selector columns a query on sessions
-// follows: the ones that mean the same there as on events. A session
-// carries others (kind, day, actor_id) that mean something else.
-var sessionSelectorColumns = map[string]bool{"utm_source": true, "utm_medium": true, "utm_campaign": true, "referrer_source": true}
+// sessionSelectorColumns maps each selector column a query on sessions
+// follows to the sessions column it filters: the ones that mean the same
+// there as on events, and host, which a session has as entry_host. A
+// session carries others (kind, day, actor_id) that mean something else.
+var sessionSelectorColumns = map[string]string{
+	"utm_source": "utm_source", "utm_medium": "utm_medium", "utm_campaign": "utm_campaign",
+	"referrer_source": "referrer_source", "host": "entry_host",
+}
+
+// selectorColumnOn is the column to filter table on for selector column,
+// and whether table follows that column at all: identities none,
+// sessions those in sessionSelectorColumns, any other table column
+// itself, which the native engine's Validate still decides.
+func selectorColumnOn(table, column string) (string, bool) {
+	switch table {
+	case "identities":
+		return "", false
+	case "sessions":
+		c, ok := sessionSelectorColumns[column]
+		return c, ok
+	}
+	return column, true
+}
 
 // parseSelectors reads a dashboard's stored selectors (store.Dashboard's
 // Selectors): "" and "[]" read as none, an empty non-nil list.
@@ -147,7 +166,7 @@ func selectorNames(sels []Selector) []string {
 
 // followedSelectors is the names, in sels' order, of the selectors w
 // follows: a query widget each one whose filter its query takes (on
-// sessions only sessionSelectorColumns, on identities none), a sql
+// sessions only sessionSelectorColumns, on identities none; selectorColumnOn), a sql
 // widget each one whose :name it reads, anything else none. Never nil.
 func followedSelectors(w store.Widget, sels []Selector) []string {
 	out := []string{}
@@ -176,14 +195,16 @@ func followedSelectors(w store.Widget, sels []Selector) []string {
 	return out
 }
 
-// queryFollows reports whether q takes a filter on column: on sessions
-// only sessionSelectorColumns, on identities none, and otherwise
-// whatever the native engine accepts ahead of q's own filters.
+// queryFollows reports whether q takes a filter for selector column
+// (selectorColumnOn): on sessions only sessionSelectorColumns, on
+// identities none, and otherwise whatever the native engine accepts
+// ahead of q's own filters.
 func queryFollows(q native.Query, column string) bool {
-	if q.Table == "identities" || (q.Table == "sessions" && !sessionSelectorColumns[column]) {
+	on, ok := selectorColumnOn(q.Table, column)
+	if !ok {
 		return false
 	}
-	return withWhere(q, []native.Filter{{Column: column, Op: "in", Values: []string{"x"}}}).Validate() == nil
+	return withWhere(q, []native.Filter{{Column: on, Op: "in", Values: []string{"x"}}}).Validate() == nil
 }
 
 // selection reads dashboard dashboardID's selectors and binds picked to
@@ -236,7 +257,8 @@ func selectorFilters(q native.Query, bound []BoundSelector) []native.Filter {
 	var out []native.Filter
 	for _, b := range bound {
 		if len(b.Values) > 0 && queryFollows(q, b.Column) {
-			out = append(out, native.Filter{Column: b.Column, Op: "in", Values: b.Values})
+			on, _ := selectorColumnOn(q.Table, b.Column)
+			out = append(out, native.Filter{Column: on, Op: "in", Values: b.Values})
 		}
 	}
 	return out

@@ -148,8 +148,8 @@ system dashboard has none. A viewer picks values of each, and nothing picked
 means All. **A widget follows a selector** as it follows a switcher: a `query`
 widget on `events`, `views`, `product`, `measures` or `checks` follows each
 one whose column its table takes as a filter, on `sessions` only
-`utm_source`, `utm_medium`, `utm_campaign` and `referrer_source`, on
-`identities` none; a `sql` widget follows each one whose `:name` it reads (a
+`utm_source`, `utm_medium`, `utm_campaign` and `referrer_source`, and `host`,
+which it filters as the session's `entry_host`, on `identities` none; a `sql` widget follows each one whose `:name` it reads (a
 `VARCHAR[]` of the picked values, the empty list for All); Markdown none.
 `get_dashboard` lists the dashboard's `selectors`, and each widget's
 `follows_selectors`, the names it follows. A selector a live `sql` widget
