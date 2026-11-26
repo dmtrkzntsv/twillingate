@@ -78,11 +78,12 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
   const selection = JSON.stringify([params.project_id, params.from, params.to])
-  const [view, setView] = useTableView(stateKey, selection)
-  const remote = isRemoteTable(widget)
   // What the answers below belong to: the selection and the selectors' values it is sent, so
   // rows from another selector's answer never stand in while this one loads or fails.
   const answerKey = JSON.stringify([selection, selectorsKey(params)])
+  // A pick narrows the rows as a project or range does: the page returns to the first.
+  const [view, setView] = useTableView(stateKey, answerKey)
+  const remote = isRemoteTable(widget)
   // A remote table's last answer under this selection: its columns decide
   // which filters are sent, and its rows stay on screen while a new view
   // loads or is refused. Another selection's rows never show here.

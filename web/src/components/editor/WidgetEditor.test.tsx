@@ -1,6 +1,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { widgets } from '@/components/widgets'
 import { ApiError, endpoints, type Widget } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
@@ -111,6 +113,23 @@ describe('WidgetEditor', () => {
     await waitFor(() => expect(preview).toHaveBeenCalled())
     expect(preview.mock.calls[0][0]).toMatchObject({ dashboard_id: 5 })
     expect(preview.mock.calls[0][0]).not.toHaveProperty('selectors')
+  })
+
+  it("runs again when the dashboard's selection changes", async () => {
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const ui = (selection: Record<string, string[]>) => (
+      <WidgetEditor open onOpenChange={vi.fn()} widget={line} dashboardId={5} defaults={{ ...defaults, selection }} onSave={onSave} />
+    )
+    const { client, rerender } = renderWithProviders(ui({ deployment: ['cloud'] }))
+    await waitFor(() => expect(preview).toHaveBeenCalledTimes(1))
+    rerender(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>{ui({ deployment: ['edge'] })}</TooltipProvider>
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(preview).toHaveBeenCalledTimes(2))
+    expect(preview.mock.calls[1][0]).toMatchObject({ selectors: { deployment: ['edge'] } })
   })
 
   it('runs nothing as an add opens', async () => {

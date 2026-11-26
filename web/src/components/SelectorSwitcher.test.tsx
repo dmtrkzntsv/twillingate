@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { endpoints, type SelectorValue } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import SelectorSwitcher from './SelectorSwitcher'
@@ -106,6 +108,24 @@ describe('SelectorSwitcher', () => {
     expect(load).toHaveBeenCalledWith(12, 'deployment', { project_id: [7, 1], from: '2026-09-20', to: '2026-09-26', picked: ['gone'] })
     await user.click(screen.getByRole('checkbox', { name: 'edge' }))
     expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads the values when the selector points at another column', async () => {
+    const user = userEvent.setup()
+    const load = vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'cloud', count: 4 }] })
+    const props = { dashboardId: 12, value: [] as string[], projectIds: [7], from: '2026-09-20', to: '2026-09-26', onChange: () => {} }
+    const { client, rerender } = renderWithProviders(<SelectorSwitcher {...props} selector={deployment} />)
+    await user.click(screen.getByRole('button', { name: /Deployment/ }))
+    await screen.findByRole('checkbox', { name: 'cloud' })
+    expect(load).toHaveBeenCalledTimes(1)
+    rerender(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <SelectorSwitcher {...props} selector={{ ...deployment, column: 'attr_plan' }} />
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
   })
 
   it('disables the rest at 100 picked and says why', async () => {

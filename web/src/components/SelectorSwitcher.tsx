@@ -94,7 +94,7 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
   const picks = useRef(value)
   picks.current = value
   const values = useQuery({
-    queryKey: ['selector-values', dashboardId, selector.name, projectIds, from, to, settled],
+    queryKey: ['selector-values', dashboardId, selector.name, selector.column, projectIds, from, to, settled],
     queryFn: () =>
       endpoints.selectorValues(dashboardId, selector.name, {
         project_id: projectIds,

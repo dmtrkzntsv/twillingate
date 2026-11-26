@@ -401,6 +401,24 @@ describe('WidgetCard with a remote table', () => {
     await waitFor(() => expect(screen.queryByText('iOS')).not.toBeInTheDocument())
   })
 
+  it('goes back to the first page when a selector pick narrows the rows', async () => {
+    const user = userEvent.setup()
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: q.selectors ? 5 : 2500 }))
+    const { client, rerender } = renderCard(remoteWidget())
+    await screen.findByText('1–1,000 of 2,500')
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    await screen.findByText('1,001–2,000 of 2,500')
+
+    const picked = { ...params, selectors: { deployment: ['cloud'] }, selector_columns: { deployment: 'attr_deployment' } }
+    rerender(cardIn(client, remoteWidget(), picked))
+    await waitFor(() => expect(spy.mock.lastCall![1]).toMatchObject({ selectors: { deployment: ['cloud'] } }))
+    expect(spy.mock.lastCall![1]).not.toHaveProperty('offset')
+    // Never asked for the old page under the new pick.
+    expect(spy.mock.calls.some(([, q]) => q.selectors && q.offset)).toBe(false)
+  })
+
   it('refreshes with the filters, sort and page on screen', async () => {
     const user = userEvent.setup()
     storeView([PLAN], { column: 'Count', dir: 'desc' })

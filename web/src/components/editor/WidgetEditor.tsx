@@ -189,13 +189,14 @@ function Editor({ open, onOpenChange, widget, defaults, dashboardId, onSave }: W
   // The dashboard hands over its range resolved; a preset picked here is resolved now.
   const span = range.from && range.to ? { from: range.from, to: range.to } : resolve(range.range, defaults.timezone, new Date())
   // What a run reads: a change to any of it after the run dims its rows.
-  const runKey = JSON.stringify([codeType, code, uses.project ? projectId : null, uses.range ? span : null])
+  const picks = JSON.stringify(dashboardId !== undefined && hasPicks(defaults.selection) ? defaults.selection : null)
+  const runKey = JSON.stringify([codeType, code, uses.project ? projectId : null, uses.range ? span : null, dashboardId ?? null, picks])
   const stale = ranWith !== null && ranWith.key !== runKey
   const last = ranOf(run)?.result
   // What an automatic run reads; null while there is nothing it could run. SQL waits to know the server takes it.
   const autoKey =
     component && !markdown && !locked && (engine.known || codeType !== 'sql') && code.trim() !== '' && (!uses.project || projectId !== undefined)
-      ? JSON.stringify([component, codeType, draft.props, uses.project ? projectId : null, uses.range ? span : null])
+      ? JSON.stringify([component, codeType, draft.props, uses.project ? projectId : null, uses.range ? span : null, dashboardId ?? null, picks])
       : null
   const ranAuto = useRef<string | null>(null)
   const everRan = ranWith !== null
