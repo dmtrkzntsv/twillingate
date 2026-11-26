@@ -191,11 +191,11 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 }
 
 // copyRow is the user row a copy of d starts from: titled title, in the
-// sidebar, with d's stored project.
+// sidebar, with d's stored project and selectors.
 func copyRow(d store.Dashboard, title string) store.Dashboard {
 	return store.Dashboard{
 		Owner: store.OwnerUser, Title: title, Sidebar: true,
-		LastProjectID: d.LastProjectID,
+		LastProjectID: d.LastProjectID, Selectors: d.Selectors,
 	}
 }
 

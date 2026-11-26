@@ -40,7 +40,7 @@ func streamAll(t *testing.T, ctx context.Context, svc *Service, reqs []WidgetReq
 func sameAsGet(t *testing.T, what string, svc *Service, req WidgetRequest, r WidgetResult) {
 	t.Helper()
 	want, werr := svc.WidgetData(context.Background(), DataRequest{WidgetID: req.WidgetID, ProjectID: req.ProjectID,
-		From: req.From, To: req.To, Fresh: req.Fresh})
+		From: req.From, To: req.To, Fresh: req.Fresh, Selectors: req.Selectors})
 	if r.WidgetID != req.WidgetID {
 		t.Errorf("%s: widget_id %d, want %d", what, r.WidgetID, req.WidgetID)
 	}
@@ -473,5 +473,41 @@ func TestWidgetDataStreamPanics(t *testing.T) {
 				t.Fatal("GET after the panic is still waiting")
 			}
 		})
+	}
+}
+
+// TestStreamMixedDashboards: items from dashboards declaring different
+// selectors each carry their own, checked against their own dashboard.
+func TestStreamMixedDashboards(t *testing.T) {
+	nat := &captureNative{}
+	svc := selectorService(t, nat)
+	a := mustCreateWith(t, svc, "Alpha", []Selector{deploymentSel}, queryStatSpec("s", hostStat))
+	c := mustCreateWith(t, svc, "Gamma", []Selector{campaignSel}, queryStatSpec("s", hostStat))
+	reqs := []WidgetRequest{
+		{WidgetID: a.Widgets[0].ID, ProjectID: 1, From: "2026-10-01", To: "2026-10-02", Selectors: map[string][]string{"deployment": {"cloud"}}},
+		{WidgetID: c.Widgets[0].ID, ProjectID: 1, From: "2026-10-01", To: "2026-10-02", Selectors: map[string][]string{"campaign": {"spring"}}},
+		{WidgetID: c.Widgets[0].ID, ProjectID: 1, From: "2026-10-01", To: "2026-10-02", Selectors: map[string][]string{"deployment": {"cloud"}}},
+	}
+	got := streamAll(t, context.Background(), svc, reqs)
+	for _, r := range got {
+		switch r.Index {
+		case 0, 1:
+			if r.Err != nil {
+				t.Errorf("item %d: %v", r.Index, r.Err)
+			}
+		case 2:
+			wantRefusal(t, r.Err, store.ErrInvalid, fmt.Sprintf("dashboard %d has no selector deployment", c.ID))
+		}
+	}
+	seen := map[string]bool{}
+	nat.mu.Lock()
+	defer nat.mu.Unlock()
+	for _, q := range nat.qs {
+		if len(q.Where) > 1 {
+			seen[q.Where[0].Column+"="+strings.Join(q.Where[0].Values, ",")] = true
+		}
+	}
+	if !seen["attr_deployment=cloud"] || !seen["utm_campaign=spring"] {
+		t.Errorf("the engine was asked %v, want each item narrowed by its own selector", nat.qs)
 	}
 }

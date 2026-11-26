@@ -36,10 +36,10 @@ import { useNow } from '@/hooks/use-now'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { captureCard, downloadBlob } from '@/lib/capture'
-import { shareCaption, type ShareContext } from '@/lib/share'
+import { shareCaption, unfollowedSelectors, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, valueOptions, viewChanged, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
-import { canRefresh, componentOf, isRemoteTable, refreshableSource, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
+import { canRefresh, componentOf, isRemoteTable, refreshableSource, refreshWidget, selectorsKey, viewQuery, widgetQuery } from '@/lib/widget-query'
 import WidgetErrorBoundary from './WidgetErrorBoundary'
 import WidgetFrame from './WidgetFrame'
 import WidgetTitleField from './WidgetTitleField'
@@ -78,29 +78,33 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   const stateKey = `twillingate.widget.${widget.dashboard_id}.${widget.widget_id}`
   // The project and range: a view's page, and the answers below, belong to one.
   const selection = JSON.stringify([params.project_id, params.from, params.to])
-  const [view, setView] = useTableView(stateKey, selection)
+  // What the answers below belong to: the selection and the selectors' values it is sent, so
+  // rows from another selector's answer never stand in while this one loads or fails.
+  const answerKey = JSON.stringify([selection, selectorsKey(params)])
+  // A pick narrows the rows as a project or range does: the page returns to the first.
+  const [view, setView] = useTableView(stateKey, answerKey)
   const remote = isRemoteTable(widget)
   // A remote table's last answer under this selection: its columns decide
   // which filters are sent, and its rows stay on screen while a new view
   // loads or is refused. Another selection's rows never show here.
-  const [kept, setKept] = useState<{ selection: string; answer: WidgetData }>()
-  const last = kept?.selection === selection ? kept.answer : undefined
-  // The selection under which the stored view was refused before any answer
+  const [kept, setKept] = useState<{ answerKey: string; answer: WidgetData }>()
+  const last = kept?.answerKey === answerKey ? kept.answer : undefined
+  // The answer key under which the stored view was refused before any answer
   // named the columns: there, ask once without it, to learn them.
   const [blindFor, setBlindFor] = useState<string>()
   const lastColumns = (last?.data as SqlData | null | undefined)?.columns
-  const viewArgs = viewQuery(widget, view, lastColumns ?? (blindFor === selection ? [] : undefined))
-  // The view that ran past the timeout under this selection: not run again
+  const viewArgs = viewQuery(widget, view, lastColumns ?? (blindFor === answerKey ? [] : undefined))
+  // The view that ran past the timeout under this selection and selectors: not run again
   // by itself (only a changed view, or the refresh, asks again), so a slow
   // stored filter costs one timeout, not one per answer that comes back.
-  const [slowView, setSlowView] = useState<{ selection: string; args: string }>()
-  const held = slowView?.selection === selection && slowView.args === JSON.stringify(viewArgs)
+  const [slowView, setSlowView] = useState<{ answerKey: string; args: string }>()
+  const held = slowView?.answerKey === answerKey && slowView.args === JSON.stringify(viewArgs)
   const options = widgetQuery(widget, params, idle, viewArgs)
   const query = useQuery({ ...options, enabled: options.enabled !== false && !held })
   const settled = remote && !query.isPlaceholderData ? query.data : undefined
   useEffect(() => {
-    if (settled) setKept({ selection, answer: settled })
-  }, [settled, selection])
+    if (settled) setKept({ answerKey, answer: settled })
+  }, [settled, answerKey])
 
   const Component = componentOf(widget)?.default
   const answer = query.data ?? (remote ? last : undefined)
@@ -111,12 +115,12 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   // A stored view that is refused, or too slow, before any answer: ask once
   // without it, so the filter bar comes up and the viewer can change it.
   useEffect(() => {
-    if (remote && (refused || timedOut) && !last && sentView) setBlindFor(selection)
-  }, [remote, refused, timedOut, last, sentView, selection])
+    if (remote && (refused || timedOut) && !last && sentView) setBlindFor(answerKey)
+  }, [remote, refused, timedOut, last, sentView, answerKey])
   const viewKey = JSON.stringify(viewArgs)
   useEffect(() => {
-    if (remote && timedOut && sentView) setSlowView({ selection, args: viewKey })
-  }, [remote, timedOut, sentView, selection, viewKey])
+    if (remote && timedOut && sentView) setSlowView({ answerKey, args: viewKey })
+  }, [remote, timedOut, sentView, answerKey, viewKey])
   // A remote refusal with rows to keep is the view's fault: it shows under the
   // filter bar, as does a filter that ran past the timeout.
   const viewError = remote && answer ? (refused ?? timedOut)?.message : undefined
@@ -163,9 +167,14 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
     return valueOptions((res.data as SqlData | null)?.rows ?? [], res.page)
   }
 
+  // A selector that is set but not followed: nothing may look filtered that is not.
+  const unfollowed = share ? unfollowedSelectors(widget, share) : []
+  const notFiltered = unfollowed.length > 0 ? `Not filtered by ${unfollowed.join(', ')}` : undefined
+
   return (
     <WidgetFrame
       title={widget.title}
+      note={notFiltered}
       titleSlot={
         editing && renaming ? (
           <WidgetTitleField title={widget.title ?? ''} onSave={(t) => editing.rename(widget, t)} onDone={() => setRenaming(false)} />

@@ -1,6 +1,7 @@
 package reporting
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -326,5 +327,26 @@ func TestSystemLoaderRefusesTwoSources(t *testing.T) {
 	_, err := loadDashboard(fsys, "d")
 	if err == nil || !strings.Contains(err.Error(), `"a"`) {
 		t.Fatalf("err = %v, want a refusal naming widget a", err)
+	}
+}
+
+func TestLoadDashboardSelectors(t *testing.T) {
+	doc := func(sels string) fstest.MapFS {
+		return fstest.MapFS{
+			"d/dashboard.json": mapFile(`{"id":1,"title":"DD","sidebar":true,"project_tab":true,"selectors":` + sels + `,"layout":[]}`),
+		}
+	}
+	fd, err := loadDashboard(doc(`[{"name":"host","label":"Host","column":"host"},{"name":"src","column":"utm_source"}]`), "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Selector{{Name: "host", Label: "Host", Column: "host"}, {Name: "src", Label: "utm_source", Column: "utm_source"}}
+	if !reflect.DeepEqual(fd.Selectors, want) {
+		t.Errorf("Selectors = %+v, want %+v", fd.Selectors, want)
+	}
+
+	_, err = loadDashboard(doc(`[{"name":"d","column":"day"}]`), "d")
+	if err == nil || !strings.Contains(err.Error(), "d/dashboard.json") {
+		t.Errorf("a day column: err = %v, want one naming d/dashboard.json", err)
 	}
 }

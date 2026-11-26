@@ -32,6 +32,10 @@ type DataRequest struct {
 	ProjectID int64
 	From, To  string
 	Fresh     bool
+	// Selectors is the viewer's pick per selector of the widget's
+	// dashboard: name → values. An absent name or an empty list is All;
+	// a name the dashboard does not declare is refused.
+	Selectors map[string][]string
 
 	Filters  string // JSON: [{"column": "...", "op": "...", "value": "..." | ["..."]}]
 	Sort     string // "<column>:asc" | "<column>:desc", split on the last ':'
@@ -112,8 +116,10 @@ type prepared struct {
 }
 
 // prepare runs every check WidgetData makes before loading: the widget
-// is live, its switchers' inputs are given and valid, its component and
-// source type exist and its paging arguments fit it.
+// is live, its switchers' inputs are given and valid, every selector it
+// is given is its dashboard's, its component and source type exist and
+// its paging arguments fit it. Its params carry every selector of the
+// widget's dashboard, bound to the values given.
 func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error) {
 	w, err := s.st.GetWidget(ctx, in.WidgetID)
 	if err != nil {
@@ -137,6 +143,11 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	if err != nil {
 		return prepared{}, err
 	}
+	sels, bound, err := s.selection(ctx, w.DashboardID, in.Selectors)
+	if err != nil {
+		return prepared{}, err
+	}
+	params.Selectors = bound
 	p.params = params
 	p.out.ProjectID, p.out.From, p.out.To = echo.ProjectID, echo.From, echo.To
 
@@ -161,7 +172,8 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 		if remoteTable(w) {
 			suffix = p.v.cacheSuffix()
 		}
-		p.key = cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, params.ProjectID, params.From, params.To, suffix)
+		selection := selectionKey(followedSelectors(w, sels), bound)
+		p.key = cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, params.ProjectID, params.From, params.To, selection, suffix)
 		p.refreshAge = s.cache.refreshAge
 	}
 	return p, nil
@@ -328,10 +340,11 @@ func wrapLoadErr(err error) error {
 // widget (same content, new id) an empty cache to start from, per D33.
 // The content hash still matters on top of the id: a widget whose source
 // changes gets a fresh key rather than needing an explicit invalidation
-// on update. suffix is a remote table's paging (paging.cacheSuffix), "" for
-// every other widget, so a page is cached per filters, sort and range of
-// rows.
-func cacheKey(widgetID int64, sourceType, content string, followsProject, followsRange bool, projectID int64, from, to, suffix string) string {
+// on update. selection is the values of the selectors it follows
+// (selectionKey), "" at All. suffix is a remote table's paging
+// (paging.cacheSuffix), "" for every other widget, so a page is cached
+// per filters, sort and range of rows.
+func cacheKey(widgetID int64, sourceType, content string, followsProject, followsRange bool, projectID int64, from, to, selection, suffix string) string {
 	sum := sha256.Sum256([]byte(content))
 	key := fmt.Sprintf("%d:%s:%x", widgetID, sourceType, sum)
 	if followsProject {
@@ -340,5 +353,5 @@ func cacheKey(widgetID int64, sourceType, content string, followsProject, follow
 	if followsRange {
 		key += fmt.Sprintf(":r=%s,%s", from, to)
 	}
-	return key + suffix
+	return key + selection + suffix
 }

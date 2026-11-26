@@ -33,7 +33,7 @@ function detail(
   tabs: DashboardTab[],
   extra: Partial<DashboardDetail> = {}
 ): DashboardDetail {
-  return { dashboard_id, title, owner: 'user', group_id, widgets: [], follows_project: false, follows_range: false, tabs, sidebar: true, project_tab: false, ...extra }
+  return { dashboard_id, title, owner: 'user', group_id, widgets: [], follows_project: false, follows_range: false, selectors: [], tabs, sidebar: true, project_tab: false, ...extra }
 }
 
 // Views/Product: a system group, uninvolved in these tests other than

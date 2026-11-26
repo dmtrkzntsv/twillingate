@@ -2,17 +2,22 @@ package reporting
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
-	"github.com/dmtrkzntsv/twillingate/sqlengine"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // seedViews writes i+1 views on the i-th day given, for projectID, so a
@@ -317,10 +322,10 @@ type stubSQLSource struct {
 	once    sync.Once
 }
 
-func (s *stubSQLSource) Name() string                                      { return "sql" }
-func (s *stubSQLSource) Cacheable() bool                                   { return true }
-func (s *stubSQLSource) Follows(string) (project, rng bool)                { return false, false }
-func (s *stubSQLSource) Validate(context.Context, string, Component) error { return nil }
+func (s *stubSQLSource) Name() string                                                { return "sql" }
+func (s *stubSQLSource) Cacheable() bool                                             { return true }
+func (s *stubSQLSource) Follows(string) (project, rng bool)                          { return false, false }
+func (s *stubSQLSource) Validate(context.Context, string, Component, []string) error { return nil }
 func (s *stubSQLSource) Load(ctx context.Context, content string, p Params) (any, error) {
 	s.once.Do(func() { close(s.started) })
 	<-s.unblock
@@ -442,6 +447,316 @@ func TestWrapLoadErrKeepsBusyAndTimeout(t *testing.T) {
 		err := wrapLoadErr(e.err(context.Background(), &sqlengine.Error{Status: kind.Status(), Kind: kind, Message: "x"}))
 		if !errors.Is(err, want) || errors.Is(err, store.ErrInvalid) || strings.Contains(err.Error(), ReleasesURL) {
 			t.Errorf("%s: err = %v, want the %v refusal as it is", kind, err, want)
+		}
+	}
+}
+
+// captureNative is a Native that records every query it is asked and
+// answers each with one row of 1s, one per column.
+type captureNative struct {
+	mu sync.Mutex
+	qs []native.Query
+}
+
+func (c *captureNative) Answer(_ context.Context, q native.Query, _ native.Params, _ archive.Rules) (native.Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.qs = append(c.qs, q)
+	cols := q.Columns()
+	row := make([]string, len(cols))
+	for i := range row {
+		row[i] = "1"
+	}
+	return native.Result{Columns: cols, Rows: [][]string{row}}, nil
+}
+
+// last is the query c was asked last.
+func (c *captureNative) last(t *testing.T) native.Query {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.qs) == 0 {
+		t.Fatal("the engine was asked nothing")
+	}
+	return c.qs[len(c.qs)-1]
+}
+
+// hostStat is a stat of events on one host: a query widget that follows
+// a selector on attr_deployment, ahead of its own filter.
+const hostStat = `{"query":{"kind":"stat","table":"events","metrics":[{"op":"count","as":"value"}],"where":[{"column":"host","op":"eq","values":["a.example"]}]}}`
+
+// identitiesStat is a stat of identities, which follows no selector.
+const identitiesStat = `{"query":{"kind":"stat","table":"identities","metrics":[{"op":"count","as":"value"}]}}`
+
+// selectorService is a Service whose query widgets nat answers and whose
+// sql engine answers every query with a value column and no rows, with
+// stat taking sql and query.
+func selectorService(t *testing.T, nat Native) *Service {
+	t.Helper()
+	svc, _ := newTestServiceOpts(t, Options{Native: nat}, 1000)
+	if err := svc.st.SyncReporting(context.Background(), store.ReportingSync{
+		Hash: "query", Version: "test", Components: []store.Component{oneComponent(t, queryStat).row(), oneComponent(t, queryBarList).row()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	answerSQL(t, svc)
+	return svc
+}
+
+func queryStatSpec(name, content string) WidgetSpec {
+	return WidgetSpec{Name: name, Component: "stat", Title: name, Source: Source{Type: "query", Content: content}}
+}
+
+// selectorReq is a load of widget id over project 1's October 2026, with
+// selectors.
+func selectorReq(id int64, selectors map[string][]string) DataRequest {
+	return DataRequest{WidgetID: id, ProjectID: 1, From: "2026-10-01", To: "2026-10-02", Selectors: selectors}
+}
+
+// todaysKey is the cache key a query widget following the project and
+// range had before selectors: what "All" must still give.
+func todaysKey(t *testing.T, svc *Service, id int64) string {
+	t.Helper()
+	w, err := svc.st.GetWidget(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%d:%s:%x:p=1:r=2026-10-01,2026-10-02", id, w.SourceType, sha256.Sum256([]byte(w.Source)))
+}
+
+func keyOf(t *testing.T, svc *Service, in DataRequest) string {
+	t.Helper()
+	p, err := svc.prepare(context.Background(), in)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	return p.key
+}
+
+// TestQueryWidgetNarrowedBySelector: a followed selector with values
+// puts an in filter ahead of the widget's own where; with none the query
+// is the widget's own.
+func TestQueryWidgetNarrowedBySelector(t *testing.T) {
+	nat := &captureNative{}
+	svc := selectorService(t, nat)
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel, campaignSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	own := native.Filter{Column: "host", Op: "eq", Values: []string{"a.example"}}
+
+	if _, err := svc.WidgetData(context.Background(), selectorReq(id, map[string][]string{"deployment": {"cloud", "self-hosted"}})); err != nil {
+		t.Fatal(err)
+	}
+	want := []native.Filter{{Column: "attr_deployment", Op: "in", Values: []string{"cloud", "self-hosted"}}, own}
+	if got := nat.last(t).Where; !reflect.DeepEqual(got, want) {
+		t.Errorf("where = %v, want %v", got, want)
+	}
+
+	if _, err := svc.WidgetData(context.Background(), selectorReq(id, map[string][]string{"deployment": {"cloud"}, "campaign": {"spring"}})); err != nil {
+		t.Fatal(err)
+	}
+	want = []native.Filter{{Column: "attr_deployment", Op: "in", Values: []string{"cloud"}},
+		{Column: "utm_campaign", Op: "in", Values: []string{"spring"}}, own}
+	if got := nat.last(t).Where; !reflect.DeepEqual(got, want) {
+		t.Errorf("two selectors: where = %v, want %v", got, want)
+	}
+
+	for _, sel := range []map[string][]string{nil, {}, {"deployment": {}}} {
+		if _, err := svc.WidgetData(context.Background(), selectorReq(id, sel)); err != nil {
+			t.Fatal(err)
+		}
+		if got := nat.last(t).Where; !reflect.DeepEqual(got, []native.Filter{own}) {
+			t.Errorf("All %v: where = %v, want the widget's own", sel, got)
+		}
+	}
+}
+
+// TestSelectorAllKeepsCacheKey: with no values picked, a widget's cache
+// key is what it was before selectors.
+func TestSelectorAllKeepsCacheKey(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	want := todaysKey(t, svc, id)
+	for _, sel := range []map[string][]string{nil, {}, {"deployment": {}}, {"deployment": nil}} {
+		if got := keyOf(t, svc, selectorReq(id, sel)); got != want {
+			t.Errorf("%v: key %q, want %q", sel, got, want)
+		}
+	}
+}
+
+// TestSelectorValuesInCacheKey: the picked values of a followed selector
+// are part of the key, sorted.
+func TestSelectorValuesInCacheKey(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel, campaignSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	ab := keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"a", "b"}}))
+	ba := keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"b", "a"}}))
+	a := keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"a"}}))
+	if ab != ba {
+		t.Errorf("reordered values: %q and %q, want one key", ab, ba)
+	}
+	if ab == a {
+		t.Errorf("different values: both %q", a)
+	}
+	if want := todaysKey(t, svc, id) + `:s.deployment/attr_deployment=["a","b"]`; ab != want {
+		t.Errorf("key %q, want %q", ab, want)
+	}
+	camp := keyOf(t, svc, selectorReq(id, map[string][]string{"campaign": {"a", "b"}}))
+	if camp == ab {
+		t.Errorf("the same values of two selectors: both %q", camp)
+	}
+}
+
+// TestSelectorUnknownNameRefused: a name the widget's dashboard does not
+// declare is refused, whatever the widget follows.
+func TestSelectorUnknownNameRefused(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("s", hostStat), queryStatSpec("i", identitiesStat))
+	for _, w := range d.Widgets {
+		_, err := svc.WidgetData(context.Background(), selectorReq(w.ID, map[string][]string{"deployment": {"cloud"}, "x": {}, "campaign": {"a"}}))
+		wantRefusal(t, err, store.ErrInvalid, fmt.Sprintf("dashboard %d has no selector campaign", d.ID))
+	}
+}
+
+// TestSelectorNotFollowedIgnored: a widget that does not follow a
+// selector loads as it would at All, under the same key.
+func TestSelectorNotFollowedIgnored(t *testing.T) {
+	nat := &captureNative{}
+	svc := selectorService(t, nat)
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("i", identitiesStat))
+	id := d.Widgets[0].ID
+	in := selectorReq(id, map[string][]string{"deployment": {"cloud"}})
+	if _, err := svc.WidgetData(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if got := nat.last(t).Where; len(got) != 0 {
+		t.Errorf("where = %v, want none", got)
+	}
+	if got, want := keyOf(t, svc, in), todaysKey(t, svc, id); got != want {
+		t.Errorf("key %q, want %q", got, want)
+	}
+}
+
+// TestSQLWidgetBindsSelector: a sql widget's :name is the picked values,
+// the empty list at All, and only a followed selector's values key it.
+func TestSQLWidgetBindsSelector(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	fake := filesOf(t, svc).sqle
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel, campaignSel}, readsDeployment("Count"))
+	id := d.Widgets[0].ID
+	bound := func(want string) {
+		t.Helper()
+		reqs := fake.Requests()
+		last := reqs[len(reqs)-1]
+		if !strings.Contains(last.SQL, "CAST($tw_deployment AS VARCHAR[])") || last.Args["tw_deployment"] != want {
+			t.Errorf("load bound %q to %v, want %q", last.SQL, last.Args, want)
+		}
+	}
+	in := DataRequest{WidgetID: id, Selectors: map[string][]string{"deployment": {"cloud"}, "campaign": {"spring"}}}
+	if _, err := svc.WidgetData(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	bound(sqlbind.ListText([]string{"cloud"}))
+	w, err := svc.st.GetWidget(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := fmt.Sprintf("%d:sql:%x", id, sha256.Sum256([]byte(w.Source)))
+	if got, want := keyOf(t, svc, in), all+`:s.deployment/attr_deployment=["cloud"]`; got != want {
+		t.Errorf("key %q, want %q", got, want)
+	}
+	if _, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id}); err != nil {
+		t.Fatal(err)
+	}
+	bound(sqlbind.ListText(nil))
+	if got := keyOf(t, svc, DataRequest{WidgetID: id}); got != all {
+		t.Errorf("All: key %q, want %q", got, all)
+	}
+}
+
+// TestQueryMissingAttributeNoRows: a selector on an attribute no event
+// carries narrows a query widget to no rows, not to an error.
+func TestQueryMissingAttributeNoRows(t *testing.T) {
+	svc := selectorService(t, nil)
+	files := filesOf(t, svc)
+	writeCountries(t, files)
+	svc.sources = querySources(t, files, nil)
+	d := mustCreateWith(t, svc, "DD", []Selector{{Name: "never", Column: "attr_never_sent"}},
+		WidgetSpec{Name: "b", Component: "bar_list", Title: "b", Source: Source{Type: "query", Content: countryBars}})
+	in := DataRequest{WidgetID: d.Widgets[0].ID, ProjectID: 1, From: "2026-10-20", To: "2026-10-21"}
+	got, err := svc.WidgetData(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := got.Data.(readsql.Result).Rows; len(rows) != 2 {
+		t.Fatalf("All: rows %v, want DE and FR", rows)
+	}
+	in.Selectors = map[string][]string{"never": {"x"}}
+	got, err = svc.WidgetData(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := got.Data.(readsql.Result).Rows; len(rows) != 0 {
+		t.Errorf("rows %v, want none", rows)
+	}
+}
+
+// TestSelectorColumnInCacheKey: the same name and values on another column
+// is another key, so a changed selector does not serve the old results.
+func TestSelectorColumnInCacheKey(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	in := selectorReq(id, map[string][]string{"deployment": {"cloud"}})
+	before := keyOf(t, svc, in)
+	sels := []Selector{{Name: "deployment", Label: "Deployment", Column: "attr_hosting"}}
+	if _, err := svc.UpdateDashboard(context.Background(), "test", UpdateDashboard{ID: d.ID, Selectors: &sels}); err != nil {
+		t.Fatal(err)
+	}
+	if after := keyOf(t, svc, in); after == before {
+		t.Errorf("column changed, key still %q", after)
+	}
+}
+
+// TestSelectorPicksDedupedAndCapped: repeated values count once, and more
+// than 100 distinct ones for a selector are refused, naming it.
+func TestSelectorPicksDedupedAndCapped(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, queryStatSpec("s", hostStat))
+	id := d.Widgets[0].ID
+	if got, want := keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"a", "a", "b"}})),
+		keyOf(t, svc, selectorReq(id, map[string][]string{"deployment": {"a", "b"}})); got != want {
+		t.Errorf("repeated value: key %q, want %q", got, want)
+	}
+	many := make([]string, 101)
+	for i := range many {
+		many[i] = fmt.Sprintf("v%d", i)
+	}
+	_, err := svc.WidgetData(context.Background(), selectorReq(id, map[string][]string{"deployment": many}))
+	wantRefusal(t, err, store.ErrInvalid, "selector deployment has 101 values, at most 100")
+	_, err = svc.WidgetData(context.Background(), selectorReq(id, map[string][]string{"deployment": append(many[:100:100], many[0])}))
+	if err != nil {
+		t.Errorf("100 distinct plus a repeat: %v", err)
+	}
+}
+
+// TestSessionsHostFiltersEntryHost: a host selector narrows a sessions
+// widget on entry_host, and a views widget on host.
+func TestSessionsHostFiltersEntryHost(t *testing.T) {
+	nat := &captureNative{}
+	svc := selectorService(t, nat)
+	hostSel := Selector{Name: "host", Label: "Host", Column: "host"}
+	sessions := `{"query":{"kind":"stat","table":"sessions","metrics":[{"op":"count","as":"value"}]}}`
+	views := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	d := mustCreateWith(t, svc, "HH", []Selector{hostSel}, queryStatSpec("s", sessions), queryStatSpec("v", views))
+	for i, col := range []string{"entry_host", "host"} {
+		if _, err := svc.WidgetData(context.Background(), selectorReq(d.Widgets[i].ID, map[string][]string{"host": {"a.example"}})); err != nil {
+			t.Fatal(err)
+		}
+		want := []native.Filter{{Column: col, Op: "in", Values: []string{"a.example"}}}
+		if got := nat.last(t).Where; !reflect.DeepEqual(got, want) {
+			t.Errorf("widget %d: where = %v, want %v", i, got, want)
 		}
 	}
 }

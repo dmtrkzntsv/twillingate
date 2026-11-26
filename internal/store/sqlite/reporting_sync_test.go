@@ -900,3 +900,42 @@ func TestSyncReportingDroppedSystemGroupLosesName(t *testing.T) {
 		t.Errorf("names after dropping the group = %v, want none", got)
 	}
 }
+
+func TestSyncWritesSystemSelectors(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	const sels = `[{"name":"host","label":"Host","column":"host"}]`
+	sync := func(hash, selectors string) {
+		t.Helper()
+		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
+			{ID: 40, Title: "D", SortKey: "a0", Sidebar: true, ProjectTab: true, Selectors: selectors},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := func() store.Dashboard {
+		t.Helper()
+		d, err := db.GetDashboard(ctx, 40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	sync("h1", sels)
+	if d := got(); d.Selectors != sels {
+		t.Fatalf("after insert: selectors %q, want %q", d.Selectors, sels)
+	}
+	execAll(t, db, `UPDATE dashboards SET sidebar=0 WHERE id=40`)
+	sync("h2", sels)
+	if d := got(); d.Selectors != sels || d.Sidebar {
+		t.Fatalf("after resync: selectors %q sidebar %v, want them kept and the row still hidden", d.Selectors, d.Sidebar)
+	}
+	sync("h3", "[]")
+	if d := got(); d.Selectors != "[]" || d.Sidebar {
+		t.Fatalf("after clearing: selectors %q sidebar %v, want [] and still hidden", d.Selectors, d.Sidebar)
+	}
+	sync("h4", "")
+	if d := got(); d.Selectors != "[]" {
+		t.Fatalf("an empty value: selectors %q, want []", d.Selectors)
+	}
+}

@@ -87,7 +87,7 @@ func TestValidateWidget(t *testing.T) {
 	comps := testComponents(t)
 
 	w := store.Widget{Component: "gauge", SourceType: "sql", Source: "select 1", Width: 3, Height: 3, Props: "{}"}
-	err := svc.validateWidget(context.Background(), comps, w)
+	err := svc.validateWidget(context.Background(), comps, w, nil)
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("unknown component: err = %v, want ErrInvalid", err)
 	}
@@ -97,7 +97,7 @@ func TestValidateWidget(t *testing.T) {
 	}
 
 	w = store.Widget{Component: "markdown", SourceType: "sql", Source: "select 1", Width: 3, Height: 3, Props: "{}"}
-	err = svc.validateWidget(context.Background(), comps, w)
+	err = svc.validateWidget(context.Background(), comps, w, nil)
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("wrong source type for component: err = %v, want ErrInvalid", err)
 	}
@@ -106,7 +106,7 @@ func TestValidateWidget(t *testing.T) {
 	}
 
 	w = store.Widget{Component: "line", SourceType: "image", Source: "x", Width: 3, Height: 3, Props: "{}"}
-	err = svc.validateWidget(context.Background(), comps, w)
+	err = svc.validateWidget(context.Background(), comps, w, nil)
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("unregistered source type: err = %v, want ErrInvalid", err)
 	}
@@ -120,12 +120,12 @@ func TestValidateWidget(t *testing.T) {
 	// list of those there are leaves it out.
 	none := New(nil, nil, Options{})
 	w = store.Widget{Component: "line", SourceType: "sql", Source: "select 1 as x, 2 as y", Width: 3, Height: 3, Props: "{}"}
-	if err := none.validateWidget(context.Background(), comps, w); !errors.Is(err, ErrSQLEngine) || !errors.Is(err, store.ErrInvalid) ||
+	if err := none.validateWidget(context.Background(), comps, w, nil); !errors.Is(err, ErrSQLEngine) || !errors.Is(err, store.ErrInvalid) ||
 		err.Error() != "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" {
 		t.Errorf("sql without an engine: err = %v, want ErrSQLEngine", err)
 	}
 	w.SourceType = "image"
-	if err := none.validateWidget(context.Background(), comps, w); err == nil || err.Error() != "source type image does not exist; there are md and query" {
+	if err := none.validateWidget(context.Background(), comps, w, nil); err == nil || err.Error() != "source type image does not exist; there are md and query" {
 		t.Errorf("unregistered source type without an engine: err = %v", err)
 	}
 	if got := none.SourceTypes(); strings.Join(got, ",") != "md,query" {

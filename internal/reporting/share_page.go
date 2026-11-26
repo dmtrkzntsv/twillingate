@@ -2,10 +2,13 @@ package reporting
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"errors"
 	"html/template"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -159,6 +162,7 @@ func (s *Service) SharePages() http.Handler {
 		if sh.CaptionRange {
 			caption = append(caption, rangeInWords(sh.From, sh.To))
 		}
+		caption = append(caption, s.selectionCaption(r.Context(), sh)...)
 		url := s.shareBase + "/share/" + sh.ID
 		taken, takenInWords := "", ""
 		if t, err := time.Parse(shareStamp, sh.CreatedAt); err == nil {
@@ -176,6 +180,32 @@ func (s *Service) SharePages() http.Handler {
 			Icon: template.HTML(shareIcon), //nolint:gosec // a constant
 		})
 	})
+}
+
+// selectionCaption is the lines that name the selection sh was made
+// under: for each selector, in its dashboard's order, its label, ": " and
+// the values joined by ", " ("Deployment: cloud"). A selector the
+// dashboard no longer has is named by its stored name. None at All.
+func (s *Service) selectionCaption(ctx context.Context, sh store.WidgetShare) []string {
+	picked := parseShareSelection(sh.Selection)
+	if len(picked) == 0 {
+		return nil
+	}
+	var sels []Selector
+	if d, err := s.st.GetDashboard(ctx, sh.DashboardID); err == nil {
+		sels = storedSelectors(d.Selectors)
+	}
+	var out []string
+	for _, sel := range sels {
+		if v := picked[sel.Name]; len(v) > 0 {
+			out = append(out, sel.Label+": "+strings.Join(v, ", "))
+			delete(picked, sel.Name)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(picked)) {
+		out = append(out, name+": "+strings.Join(picked[name], ", "))
+	}
+	return out
 }
 
 // shareNotFound answers 404: shareMissing for a page, plain text for an

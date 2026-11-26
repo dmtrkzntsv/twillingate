@@ -69,7 +69,7 @@ func (s *Service) AddWidget(ctx context.Context, actor string, in AddWidget) (Wi
 	}
 	w := ws[0]
 	w.DashboardID = d.ID
-	if err := s.validateWidget(ctx, comps, w); err != nil {
+	if err := s.validateWidget(ctx, comps, w, dashboardSelectorNames(d)); err != nil {
 		return WidgetInfo{}, err
 	}
 	return s.insertWidget(ctx, w, in.After, store.AuditEntry{Actor: actor, Action: "widget.add"})
@@ -89,7 +89,8 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	if err != nil {
 		return WidgetInfo{}, err
 	}
-	if _, err := s.editableDashboard(ctx, w.DashboardID); err != nil {
+	d, err := s.editableDashboard(ctx, w.DashboardID)
+	if err != nil {
 		return WidgetInfo{}, err
 	}
 	// A removed component (D14) leaves nothing to check content against,
@@ -146,7 +147,7 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 		Height:  in.Height != nil,
 	}
 	if cols == (store.WidgetColumns{}) { // nothing to change: no check, no write, no audit row
-		return s.widgetInfo(w), nil
+		return s.widgetInfo(w, storedSelectors(d.Selectors)), nil
 	}
 	// Only a new component, props or source changes what the widget
 	// draws: a move, a resize or a rename (title, name, checked above)
@@ -157,7 +158,7 @@ func (s *Service) UpdateWidget(ctx context.Context, actor string, in UpdateWidge
 	} else {
 		var comps map[string]Component
 		if comps, err = s.components(ctx); err == nil {
-			err = s.validateWidget(ctx, comps, w)
+			err = s.validateWidget(ctx, comps, w, dashboardSelectorNames(d))
 		}
 	}
 	if err != nil {
@@ -218,7 +219,9 @@ func (s *Service) CopyWidget(ctx context.Context, actor string, in CopyWidget) (
 	if err != nil {
 		return WidgetInfo{}, err
 	}
-	if err := s.validateWidget(ctx, comps, w); err != nil {
+	// Against the target's selectors: a sql widget reading one it lacks
+	// is refused, naming it.
+	if err := s.validateWidget(ctx, comps, w, dashboardSelectorNames(d)); err != nil {
 		return WidgetInfo{}, err
 	}
 	return s.insertWidget(ctx, w, in.After, store.AuditEntry{
@@ -229,7 +232,11 @@ func (s *Service) ArchiveWidget(ctx context.Context, actor string, id int64) err
 	return s.setWidgetArchived(ctx, actor, id, true)
 }
 
-// RestoreWidget unhides a widget where it was: it kept its sort key.
+// RestoreWidget unhides a widget where it was: it kept its sort key. A
+// sql widget that reads a selector its dashboard no longer has is
+// refused, as a copy to that dashboard would be; nothing else about it
+// is checked again, so one whose query broke while archived still comes
+// back, as before.
 func (s *Service) RestoreWidget(ctx context.Context, actor string, id int64) error {
 	return s.setWidgetArchived(ctx, actor, id, false)
 }
@@ -245,6 +252,11 @@ func (s *Service) setWidgetArchived(ctx context.Context, actor string, id int64,
 	}
 	if err := refuseSystem(d); err != nil {
 		return err
+	}
+	if !archived && w.SourceType == "sql" {
+		if _, err := checkSQLParams(w.Source, dashboardSelectorNames(d)); err != nil {
+			return err
+		}
 	}
 	return s.st.SetWidgetArchived(ctx, id, archived,
 		store.AuditEntry{Actor: actor, Action: archiveAction("widget", archived)})
@@ -268,7 +280,17 @@ func (s *Service) readWidget(ctx context.Context, id int64) (WidgetInfo, error) 
 	if err != nil {
 		return WidgetInfo{}, err
 	}
-	return s.widgetInfo(w), nil
+	d, err := s.st.GetDashboard(ctx, w.DashboardID)
+	if err != nil {
+		return WidgetInfo{}, err
+	}
+	return s.widgetInfo(w, storedSelectors(d.Selectors)), nil
+}
+
+// dashboardSelectorNames is the names of d's selectors: what a sql
+// widget on d may read beside :project, :from and :to.
+func dashboardSelectorNames(d store.Dashboard) []string {
+	return selectorNames(storedSelectors(d.Selectors))
 }
 
 func refuseRemoved(id int64) error {

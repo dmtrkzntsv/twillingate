@@ -246,8 +246,10 @@ func queryErr(err error) error {
 
 // Validate checks content and that its columns, renamed and picked, fit c: their
 // names, and their types against the ones c declares. It reads no data:
-// the columns and their types come from the query alone.
-func (*querySource) Validate(_ context.Context, content string, c Component) error {
+// the columns and their types come from the query alone. A query follows
+// the dashboard's selectors its table takes (followedSelectors), so they
+// need no check here.
+func (*querySource) Validate(_ context.Context, content string, c Component, _ []string) error {
 	pq, err := parseQuery(content)
 	if err != nil {
 		return err
@@ -288,7 +290,8 @@ type queryPlan struct {
 }
 
 // plan checks content and p for a load, and reads the rules it runs
-// with.
+// with. The query gains, ahead of its own where, an in filter for each
+// of p's selectors with values whose column its table takes.
 func (s *querySource) plan(ctx context.Context, content string, p Params) (queryPlan, error) {
 	pq, err := parseQuery(content)
 	if err != nil {
@@ -314,7 +317,11 @@ func (s *querySource) plan(ctx context.Context, content string, p Params) (query
 	if s.rules != nil {
 		rules = s.rules(ctx, project)
 	}
-	return queryPlan{qc: qc, cols: pq.renamed, q: qc.Query, p: native.Params{Project: project, From: from, To: to}, rules: rules}, nil
+	q := qc.Query
+	if fs := selectorFilters(q, p.Selectors); len(fs) > 0 {
+		q = withWhere(q, fs)
+	}
+	return queryPlan{qc: qc, cols: pq.renamed, q: q, p: native.Params{Project: project, From: from, To: to}, rules: rules}, nil
 }
 
 // withTimeout is ctx under CONSOLE_QUERY_TIMEOUT; without one, ctx

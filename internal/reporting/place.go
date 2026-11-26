@@ -145,11 +145,11 @@ func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboa
 		if err := s.st.MoveDashboards(ctx, keys, store.GroupRekey{}, a); err != nil {
 			return err
 		}
-		if in.Title == "" {
+		if in.Title == "" && in.Selectors == nil {
 			return nil
 		}
-		// A new title is a second write (and a second audit row): the
-		// move rewrites keys only. row takes its new key so the title
+		// A new title or selectors are a second write (and a second audit
+		// row): the move rewrites keys only. row takes its new key so that
 		// write keeps it.
 		row.SortKey = keys[0].SortKey
 	}

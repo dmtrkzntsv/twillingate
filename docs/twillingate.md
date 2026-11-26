@@ -1899,9 +1899,9 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets eighty-one tools: the thirty-four below, the twelve
+A connected session gets eighty-two tools: the thirty-four below, the twelve
 in [Collect form submissions](#collect-form-submissions), the three in
-[Notifications](#notifications), the eight in [Alerts](#alerts), and twenty-four
+[Notifications](#notifications), the eight in [Alerts](#alerts), and twenty-five
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.

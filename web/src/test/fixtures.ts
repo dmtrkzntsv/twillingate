@@ -50,6 +50,7 @@ function widget(dashboard_id: number, component: string, title: string, width: n
     source: { type: component === 'markdown' ? 'md' : 'sql', content: '…' },
     follows_project: component !== 'markdown',
     follows_range: component !== 'markdown',
+    follows_selectors: [],
     ...extra,
   }
 }
@@ -57,7 +58,7 @@ function widget(dashboard_id: number, component: string, title: string, width: n
 function detail(info: DashboardInfo, widgets: Widget[], opts: { tabs?: DashboardTab[]; follows?: boolean } = {}): DashboardDetail {
   const tabs = opts.tabs ?? [{ dashboard_id: info.dashboard_id, title: info.title }]
   const follows = opts.follows ?? true
-  return { ...info, follows_project: follows, follows_range: follows, widgets, tabs }
+  return { ...info, follows_project: follows, follows_range: follows, selectors: [], widgets, tabs }
 }
 
 const list = dashboardsList().dashboards

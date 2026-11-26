@@ -104,7 +104,7 @@ func TestSQLValidateRefusesUnsupportedParams(t *testing.T) {
 		"select 1 as x, 2 as y; drop x": "sql must be a single statement; remove what follows the ';'",
 		" ;\n":                          "sql must not be empty",
 	} {
-		err := s.Validate(context.Background(), content, line)
+		err := s.Validate(context.Background(), content, line, nil)
 		wantRefusal(t, err, store.ErrInvalid, msg)
 	}
 }
@@ -117,7 +117,7 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 	now := time.Date(2026, 10, 14, 23, 0, 0, 0, time.FixedZone("UTC-3", -3*3600)) // 2026-10-15 in UTC
 	s := &sqlSource{eng: f.eng(t), sampleRows: true, now: func() time.Time { return now }}
 	content := "SELECT count(*) AS value FROM views WHERE project_id = :project AND day BETWEEN :from AND :to"
-	if err := s.Validate(context.Background(), content, testComponents(t)["stat"]); err != nil {
+	if err := s.Validate(context.Background(), content, testComponents(t)["stat"], nil); err != nil {
 		t.Fatal(err)
 	}
 	bound := "SELECT count(*) AS value FROM views WHERE project_id = CAST($tw_project AS BIGINT) AND day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE)"
@@ -132,7 +132,7 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 
 	// Without :project, nothing is scoped and no project is bound.
 	f.calls = nil
-	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"]); err != nil {
+	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"], nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 2 || f.calls[0].scope || len(f.calls[0].args) != 0 {
@@ -145,7 +145,7 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 func TestSQLValidateShapeOnly(t *testing.T) {
 	f := &fakeFiles{maxRows: 10}
 	s := &sqlSource{eng: f.eng(t)}
-	if err := s.Validate(context.Background(), "SELECT 'x' AS value", testComponents(t)["stat"]); err != nil {
+	if err := s.Validate(context.Background(), "SELECT 'x' AS value", testComponents(t)["stat"], nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 1 || f.calls[0].mode != sqlengine.ModeShape || f.calls[0].maxRows != 0 {
@@ -176,7 +176,7 @@ func TestSQLProjectZeroScopesToNoRows(t *testing.T) {
 	if _, err := s.Load(context.Background(), content, Params{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Validate(context.Background(), content, testComponents(t)["stat"]); err != nil {
+	if err := s.Validate(context.Background(), content, testComponents(t)["stat"], nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range f.calls {
@@ -300,7 +300,7 @@ func TestSQLiteHintOnTheEngine(t *testing.T) {
 		"SELECT day + 'x' AS d FROM events":                          false,
 		"SELECT count(*) AS n FROM views WHERE day > :from":          false, // runs
 	} {
-		err := s.Validate(context.Background(), content, table)
+		err := s.Validate(context.Background(), content, table, nil)
 		if strings.HasSuffix(content, ":from") {
 			if err != nil {
 				t.Errorf("%s: %v, want nil", content, err)
@@ -345,7 +345,7 @@ func TestWidgetSQLReadsOnlyTheTables(t *testing.T) {
 				t.Errorf("%s %s: err = %v; want ErrInvalid %q", how, content, err, want)
 			}
 		}
-		check("save", s.Validate(ctx, content, table))
+		check("save", s.Validate(ctx, content, table, nil))
 		_, err := svc.Preview(ctx, PreviewIn{Component: "table", Source: Source{Type: "sql", Content: content}, ProjectID: 1, From: p.From, To: p.To})
 		check("preview", err)
 		_, err = s.Load(ctx, content, p)
@@ -361,7 +361,7 @@ func TestWidgetSQLReadsOnlyTheTables(t *testing.T) {
 
 func TestSQLValidateRefusesSyntaxError(t *testing.T) {
 	s := &sqlSource{eng: newTestFiles(t).eng()}
-	err := s.Validate(context.Background(), "select from where", testComponents(t)["table"])
+	err := s.Validate(context.Background(), "select from where", testComponents(t)["table"], nil)
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
@@ -387,12 +387,12 @@ func TestSQLValidateOnTheFiles(t *testing.T) {
 		where project_id = :project and day >= :from and day <= :to group by day`
 	for _, sampleRows := range []bool{false, true} {
 		s := &sqlSource{eng: f.eng(), sampleRows: sampleRows}
-		if err := s.Validate(context.Background(), content, testComponents(t)["line"]); err != nil {
+		if err := s.Validate(context.Background(), content, testComponents(t)["line"], nil); err != nil {
 			t.Errorf("sampleRows=%v: Validate = %v, want nil", sampleRows, err)
 		}
 	}
 	s := &sqlSource{eng: f.eng(), sampleRows: true}
-	err := s.Validate(context.Background(), "select 'n' || count(*) as value from views where project_id = :project", testComponents(t)["stat"])
+	err := s.Validate(context.Background(), "select 'n' || count(*) as value from views where project_id = :project", testComponents(t)["stat"], nil)
 	wantRefusal(t, err, store.ErrInvalid, `stat.value: "n2" is not number`)
 }
 
@@ -404,12 +404,12 @@ func TestSQLValidateTimesOut(t *testing.T) {
 	stat := testComponents(t)["stat"]
 	// The first query starts the child and builds the tables, which the
 	// short timeout below is not for.
-	if err := (&sqlSource{eng: f.eng()}).Validate(context.Background(), "SELECT 1 AS value", stat); err != nil {
+	if err := (&sqlSource{eng: f.eng()}).Validate(context.Background(), "SELECT 1 AS value", stat, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.timeout = 50 * time.Millisecond
 	s := &sqlSource{eng: f.eng(), sampleRows: true}
-	err := s.Validate(context.Background(), "SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)", stat)
+	err := s.Validate(context.Background(), "SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)", stat, nil)
 	wantRefusal(t, err, store.ErrTimeout, sqlbind.Timeout(50*time.Millisecond))
 }
 
@@ -417,11 +417,11 @@ func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {
 	s := &sqlSource{eng: newTestFiles(t).eng()}
 	line := testComponents(t)["line"]
 
-	if err := s.Validate(context.Background(), "select 1 as x, 2 as y", line); err != nil {
+	if err := s.Validate(context.Background(), "select 1 as x, 2 as y", line, nil); err != nil {
 		t.Errorf("Validate(x,y) = %v, want nil", err)
 	}
 
-	err := s.Validate(context.Background(), "select 1 as x, 2 as visitor", line)
+	err := s.Validate(context.Background(), "select 1 as x, 2 as visitor", line, nil)
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("Validate(x,visitor) = %v, want ErrInvalid", err)
 	}
@@ -431,11 +431,11 @@ func TestSQLValidateSamplesRowsAndChecksTypes(t *testing.T) {
 	s := &sqlSource{eng: newTestFiles(t).eng(), sampleRows: true}
 	stat := testComponents(t)["stat"]
 
-	if err := s.Validate(context.Background(), "select 3.5 as value", stat); err != nil {
+	if err := s.Validate(context.Background(), "select 3.5 as value", stat, nil); err != nil {
 		t.Errorf("Validate(value=3.5) = %v, want nil", err)
 	}
 
-	err := s.Validate(context.Background(), "select 'oops' as value", stat)
+	err := s.Validate(context.Background(), "select 'oops' as value", stat, nil)
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("Validate(value='oops') = %v, want ErrInvalid", err)
 	}
@@ -475,7 +475,7 @@ func TestMDValidate(t *testing.T) {
 	markdown := comps["markdown"]
 
 	for _, content := range []string{"", "   \n\t"} {
-		err := m.Validate(context.Background(), content, markdown)
+		err := m.Validate(context.Background(), content, markdown, nil)
 		if !errors.Is(err, store.ErrInvalid) {
 			t.Fatalf("Validate(%q) = %v, want ErrInvalid", content, err)
 		}
@@ -483,7 +483,7 @@ func TestMDValidate(t *testing.T) {
 			t.Errorf("err = %q, want it to say markdown text is empty", err.Error())
 		}
 	}
-	if err := m.Validate(context.Background(), "# hi", markdown); err != nil {
+	if err := m.Validate(context.Background(), "# hi", markdown, nil); err != nil {
 		t.Errorf("Validate(non-empty) = %v, want nil", err)
 	}
 }
@@ -514,7 +514,7 @@ func TestSQLWithoutAnEngine(t *testing.T) {
 	if _, err := s.Load(context.Background(), "SELECT 1", Params{}); !errors.Is(err, ErrSQLEngine) {
 		t.Errorf("Load: err = %v, want ErrSQLEngine", err)
 	}
-	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"]); !errors.Is(err, ErrSQLEngine) {
+	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"], nil); !errors.Is(err, ErrSQLEngine) {
 		t.Errorf("Validate: err = %v, want ErrSQLEngine", err)
 	}
 }
@@ -571,7 +571,7 @@ func TestSQLValidateTriesEveryProject(t *testing.T) {
 		fake.On(archivetest.Any, notFound)
 		fake.On(scopeIs(2), archivetest.Shape("value"))
 		s := &sqlSource{eng: eng}
-		if err := s.Validate(context.Background(), content, stat); err != nil {
+		if err := s.Validate(context.Background(), content, stat, nil); err != nil {
 			t.Fatalf("err = %v, want it to pass on project 2", err)
 		}
 		if got := scopes(fake); !reflect.DeepEqual(got, []int64{1, 2}) {
@@ -583,7 +583,7 @@ func TestSQLValidateTriesEveryProject(t *testing.T) {
 		fake.On(archivetest.Any, archivetest.Fail(sqlengine.KindSQL, "Binder Error: elsewhere"))
 		fake.On(scopeIs(1), notFound)
 		s := &sqlSource{eng: eng}
-		err := s.Validate(context.Background(), content, stat)
+		err := s.Validate(context.Background(), content, stat, nil)
 		wantRefusal(t, err, store.ErrInvalid, `Binder Error: Referenced column "attr_position" not found`)
 		if got := scopes(fake); !reflect.DeepEqual(got, []int64{1, 2, 3}) {
 			t.Errorf("scopes = %v, want every project, [1 2 3]", got)
@@ -594,7 +594,7 @@ func TestSQLValidateTriesEveryProject(t *testing.T) {
 		fake.On(archivetest.Any, archivetest.Shape("nope"))
 		fake.On(scopeIs(3), archivetest.Shape("value"))
 		s := &sqlSource{eng: eng}
-		if err := s.Validate(context.Background(), content, stat); err != nil {
+		if err := s.Validate(context.Background(), content, stat, nil); err != nil {
 			t.Fatalf("err = %v, want it to pass on project 3", err)
 		}
 	})
@@ -606,7 +606,7 @@ func TestSQLValidateTriesEveryProject(t *testing.T) {
 			eng, fake := projectsEngine(t, days)
 			fake.On(archivetest.Any, answer)
 			s := &sqlSource{eng: eng}
-			if err := s.Validate(context.Background(), content, stat); err == nil {
+			if err := s.Validate(context.Background(), content, stat, nil); err == nil {
 				t.Fatal("err = nil, want the first project's")
 			}
 			if got := scopes(fake); !reflect.DeepEqual(got, []int64{1}) {
@@ -618,7 +618,7 @@ func TestSQLValidateTriesEveryProject(t *testing.T) {
 		eng, fake := projectsEngine(t, days)
 		fake.On(archivetest.Any, archivetest.Fail(sqlengine.KindSQL, "Binder Error: x"))
 		s := &sqlSource{eng: eng}
-		if err := s.Validate(context.Background(), "SELECT attr_position AS value FROM product", stat); err == nil {
+		if err := s.Validate(context.Background(), "SELECT attr_position AS value FROM product", stat, nil); err == nil {
 			t.Fatal("err = nil, want the refusal")
 		}
 		if n, got := len(fake.Requests()), scopes(fake); n != 1 || got != nil {

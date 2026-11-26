@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -62,6 +63,7 @@ type widgetDataIn struct {
 	From      string `json:"from,omitempty" jsonschema:"YYYY-MM-DD; with to, required when the widget follows the range switcher (its SQL uses :from or :to); ignored otherwise"`
 	To        string `json:"to,omitempty" jsonschema:"YYYY-MM-DD, at most 365 days after from; a day after today is clamped to today"`
 	Fresh     bool   `json:"fresh,omitempty" jsonschema:"true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old instead of REPORTING_CACHE_MAX_AGE"`
+	Selectors string `json:"selectors,omitempty" jsonschema:"the values picked per selector of the widget's dashboard, as a JSON object of name to a list of values: {\"deployment\":[\"cloud\"]}. An absent name or an empty list is All; a name the dashboard does not declare is refused; a selector the widget does not follow is ignored"`
 	Filters   string `json:"filters,omitempty" jsonschema:"remote tables only (props.mode \"remote\"): a JSON list of {column, op, value}; op is =, !=, <, >, in or not in; in/not in take a list. See docs://reporting, Filtering and paging a table"`
 	Sort      string `json:"sort,omitempty" jsonschema:"remote tables only: <column>:asc or <column>:desc; the whole result is sorted, not the page"`
 	Distinct  string `json:"distinct,omitempty" jsonschema:"remote tables only: return [value, rows] for this column among rows matching the other filters, most frequent first"`
@@ -69,20 +71,42 @@ type widgetDataIn struct {
 	Limit     int    `json:"limit,omitempty" jsonschema:"remote tables only: page size, 1 to CONSOLE_QUERY_ROWS_MAX (the default)"`
 }
 
+type selectorValuesIn struct {
+	DashboardID int64    `json:"dashboard_id" jsonschema:"the dashboard that declares the selector"`
+	Name        string   `json:"name" jsonschema:"the selector's name, as get_dashboard lists it"`
+	ProjectIDs  []int64  `json:"project_ids" jsonschema:"1 to 10 projects whose events are read; the values are merged across them. On the REST route repeat project_id"`
+	From        string   `json:"from" jsonschema:"YYYY-MM-DD"`
+	To          string   `json:"to" jsonschema:"YYYY-MM-DD, at most 365 days after from"`
+	Search      string   `json:"search,omitempty" jsonschema:"keep the values that contain this text, in any case"`
+	Picked      []string `json:"picked,omitempty" jsonschema:"values already picked, kept in the answer with a count of 0 when the range has none of them. On the REST route repeat picked"`
+}
+
+type selectorValuesOut struct {
+	Values []reporting.SelectorValue `json:"values"`
+}
+
+func (h *host) selectorValues(ctx context.Context, in selectorValuesIn) (selectorValuesOut, error) {
+	vs, err := h.rep.SelectorValues(ctx, reporting.SelectorValuesIn{DashboardID: in.DashboardID, Name: in.Name,
+		ProjectIDs: in.ProjectIDs, From: in.From, To: in.To, Search: in.Search, Picked: in.Picked})
+	return selectorValuesOut{Values: vs}, err
+}
+
 type createDashboardIn struct {
-	Title   string                 `json:"title" jsonschema:"the dashboard's title, at least 2 characters (required)"`
-	GroupID int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
-	After   *int64                 `json:"after,omitempty" jsonschema:"where the new dashboard goes. Without group_id: after the named dashboard's whole group in the sidebar, 0 first. With group_id: after that tab, 0 the first tab. Omit to put it last"`
-	Widgets []reporting.WidgetSpec `json:"widgets,omitempty" jsonschema:"widgets in order; all are validated, and one refusal creates nothing"`
+	Title     string                 `json:"title" jsonschema:"the dashboard's title, at least 2 characters (required)"`
+	GroupID   int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
+	After     *int64                 `json:"after,omitempty" jsonschema:"where the new dashboard goes. Without group_id: after the named dashboard's whole group in the sidebar, 0 first. With group_id: after that tab, 0 the first tab. Omit to put it last"`
+	Selectors []reporting.Selector   `json:"selectors,omitempty" jsonschema:"up to 5 pickers its page shows above the widgets, each {name, label, column}: a viewer picks values of column and every widget that follows the selector narrows to them (query widgets whose table takes the column, sql widgets that read :name)"`
+	Widgets   []reporting.WidgetSpec `json:"widgets,omitempty" jsonschema:"widgets in order; all are validated, and one refusal creates nothing"`
 }
 
 type updateDashboardIn struct {
-	DashboardID int64  `json:"dashboard_id" jsonschema:"dashboard id"`
-	Title       string `json:"title,omitempty" jsonschema:"new title, at least 2 characters; omit to keep"`
-	WholeGroup  bool   `json:"whole_group,omitempty" jsonschema:"true renames this dashboard's group with title (required, at least 2 characters), leaving the tabs' own titles alone unless the group has one live tab, which takes the name as its title; takes no after or group_id"`
-	GroupID     *int64 `json:"group_id,omitempty" jsonschema:"move it into this group as a tab (after then names a tab there; 0 first); 0 takes it out as a dashboard of its own; omit to stay"`
-	After       *int64 `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab after it; one in another group moves the whole group after that group (with group_id, it names a tab of that group; with group_id 0, the dashboard goes after that group on its own). 0: without group_id, moves the whole group to the top of the sidebar; with group_id, makes it the first tab (group_id 0: the top of the sidebar)"`
-	Sidebar     *bool  `json:"sidebar,omitempty" jsonschema:"built-in dashboards only: true or false puts its whole group in or out of the sidebar. Your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Not with title, after or group_id"`
+	DashboardID int64                 `json:"dashboard_id" jsonschema:"dashboard id"`
+	Title       string                `json:"title,omitempty" jsonschema:"new title, at least 2 characters; omit to keep"`
+	WholeGroup  bool                  `json:"whole_group,omitempty" jsonschema:"true renames this dashboard's group with title (required, at least 2 characters), leaving the tabs' own titles alone unless the group has one live tab, which takes the name as its title; takes no after, group_id or selectors"`
+	GroupID     *int64                `json:"group_id,omitempty" jsonschema:"move it into this group as a tab (after then names a tab there; 0 first); 0 takes it out as a dashboard of its own; omit to stay"`
+	After       *int64                `json:"after,omitempty" jsonschema:"a dashboard id: one in the same group moves this tab after it; one in another group moves the whole group after that group (with group_id, it names a tab of that group; with group_id 0, the dashboard goes after that group on its own). 0: without group_id, moves the whole group to the top of the sidebar; with group_id, makes it the first tab (group_id 0: the top of the sidebar)"`
+	Selectors   *[]reporting.Selector `json:"selectors,omitempty" jsonschema:"the whole new list of selectors, up to 5, each {name, label, column}; [] clears them; omit to keep. A name a live sql widget here reads cannot be removed or renamed; a label or column can change"`
+	Sidebar     *bool                 `json:"sidebar,omitempty" jsonschema:"built-in dashboards only: true or false puts its whole group in or out of the sidebar. Your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Not with title, after, group_id or selectors"`
 }
 
 type projectTabsIn struct {
@@ -150,6 +174,10 @@ type previewWidgetIn struct {
 	ProjectID int64            `json:"project_id,omitempty" jsonschema:"bound to :project; required when the sql uses it"`
 	From      string           `json:"from,omitempty" jsonschema:"YYYY-MM-DD, bound to :from; with to, required when the sql uses :from or :to"`
 	To        string           `json:"to,omitempty" jsonschema:"YYYY-MM-DD, bound to :to; a day after today is clamped to today"`
+	// DashboardID and Selectors: the dashboard the draft is for, whose
+	// selectors its sql may read, and the values picked.
+	DashboardID int64               `json:"dashboard_id,omitempty" jsonschema:"the dashboard the draft is for: its sql may then read that dashboard's selectors, and a query narrows by the ones it follows; omit for :project, :from and :to only"`
+	Selectors   map[string][]string `json:"selectors,omitempty" jsonschema:"with dashboard_id: the values picked per selector, name to a list of values; an absent name or an empty list is All (the empty list)"`
 }
 
 func (h *host) listComponents(ctx context.Context, _ struct{}) (listComponentsOut, error) {
@@ -171,20 +199,38 @@ func (h *host) listWidgets(ctx context.Context, in listWidgetsIn) (listWidgetsOu
 }
 
 func (h *host) widgetData(ctx context.Context, in widgetDataIn) (reporting.WidgetData, error) {
+	sels, err := parseSelection(in.Selectors)
+	if err != nil {
+		return reporting.WidgetData{}, err
+	}
 	return h.rep.WidgetData(ctx, reporting.DataRequest{
-		WidgetID: in.WidgetID, ProjectID: in.ProjectID, From: in.From, To: in.To, Fresh: in.Fresh,
+		WidgetID: in.WidgetID, ProjectID: in.ProjectID, From: in.From, To: in.To, Fresh: in.Fresh, Selectors: sels,
 		Filters: in.Filters, Sort: in.Sort, Distinct: in.Distinct, Offset: in.Offset, Limit: in.Limit})
+}
+
+// parseSelection reads widget_data's selectors, JSON text since the GET
+// route takes it in the query string: an object of selector name to a
+// list of strings. "" (and null) is none.
+func parseSelection(raw string) (map[string][]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, invalidf(`selectors: not a JSON object of selector names to lists of values, as {"deployment":["cloud"]}: %s`, err)
+	}
+	return out, nil
 }
 
 func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (reporting.DashboardDetail, error) {
 	return h.rep.CreateDashboard(ctx, actorFrom(ctx), reporting.CreateDashboard{
-		Title: in.Title, GroupID: in.GroupID, After: in.After, Widgets: in.Widgets})
+		Title: in.Title, GroupID: in.GroupID, After: in.After, Selectors: in.Selectors, Widgets: in.Widgets})
 }
 
 func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (reporting.DashboardInfo, error) {
 	return h.rep.UpdateDashboard(ctx, actorFrom(ctx), reporting.UpdateDashboard{
 		ID: in.DashboardID, Title: in.Title, WholeGroup: in.WholeGroup, GroupID: in.GroupID, After: in.After,
-		Sidebar: in.Sidebar})
+		Selectors: in.Selectors, Sidebar: in.Sidebar})
 }
 
 func (h *host) duplicateDashboard(ctx context.Context, in duplicateDashboardIn) (reporting.DashboardDetail, error) {
@@ -259,6 +305,7 @@ func (h *host) previewWidget(ctx context.Context, in previewWidgetIn) (reporting
 	return h.rep.Preview(ctx, reporting.PreviewIn{
 		Component: in.Component, Props: in.Props, Source: in.Source,
 		ProjectID: in.ProjectID, From: in.From, To: in.To,
+		DashboardID: in.DashboardID, Selectors: in.Selectors,
 	})
 }
 
@@ -302,14 +349,18 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Widgets, archived ones included, each with its dashboard and its 1-based position there. Filter by dashboard_id and/or component; use it to find an archived widget to restore, or every widget on a component."},
 		h.listWidgets)
 	expose(r, spec{Name: "widget_data", Annotations: ro, Method: "GET", Path: w + "/data",
-		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. fresh=true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
+		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. selectors, JSON text such as {\"deployment\":[\"cloud\"]}, is the values picked per selector of its dashboard: a query widget narrows to them where its table takes the column, a sql widget reads them as :name (the empty list for All). fresh=true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
 		h.widgetData)
 
+	expose(r, spec{Name: "selector_values", Annotations: ro, Method: "GET", Path: d + "/selectors/{name}/values",
+		Description: "The values a dashboard's selector can take: its column's values over project_ids (1 to 10, merged) and from/to, by event count, the busiest first, at most 100, as {value, count}. search keeps the values that contain it, in any case, among each project's 1,000 busiest values of the column in the range. picked values stay in the list with a count of 0 when the range has none of them. Read through the native engine, so it costs what a widget does. Use it to find what to pass in widget_data's selectors."},
+		h.selectorValues)
+
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
-		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order, each as add_widget takes it (prefer query sources over sql). All or nothing: one invalid widget creates nothing."},
+		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), optional selectors (up to 5 pickers above the widgets, each {name, label, column}; a query widget follows each one its table takes, a sql widget each one whose :name it reads), and optional widgets in order, each as add_widget takes it (prefer query sources over sql). All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
-		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. A group of one live tab has one name: naming it retitles that tab, and retitling that tab renames the group with it. sidebar, in a call of its own and for built-in dashboards only, puts the whole group in or out of the sidebar; your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Your own dashboards are added to projects one at a time with add_project_tab. Otherwise system dashboards are read-only."},
+		Description: "Rename a user dashboard (title, at least 2 characters) and/or replace its selectors (the whole list; [] clears it; a name a live sql widget reads cannot be removed or renamed) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. A group of one live tab has one name: naming it retitles that tab, and retitling that tab renames the group with it. sidebar, in a call of its own and for built-in dashboards only, puts the whole group in or out of the sidebar; your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Your own dashboards are added to projects one at a time with add_project_tab. Otherwise system dashboards are read-only."},
 		h.updateDashboard)
 	expose(r, spec{Name: "duplicate_dashboard", constrain: narrowEnums, Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
 		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. The copy is a new dashboard last in the sidebar; with group_id it joins that user group as a tab instead (right after the source when that is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no group_id. The copy is in the sidebar and on no project's tabs. Duplicating never hides the source: to replace a system group, take it out of the sidebar with update_dashboard {sidebar: false}, and add your copy to projects with add_project_tab. where and project_id narrow every copied query widget: its rows must also pass where (a segment: {op: ever, by: group, where: [host eq app.example.com]}; no test traffic: {op: never, where: [...]}), and it reads that project; a sql widget among the copies is refused."},
@@ -353,7 +404,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Store the project the viewer chose on a dashboard with a project switcher. The range is not stored: the web app keeps one for every dashboard, in the browser."},
 		h.setView)
 	restOnly(r, spec{Name: "preview_widget", Method: "POST", Path: "/api/widgets/preview",
-		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
+		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range (and, with dashboard_id, that dashboard's selectors, bound to selectors), uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
 		h.previewWidget)
 	h.registerWidgetStream(r)
 	h.registerWidgetShares(r)

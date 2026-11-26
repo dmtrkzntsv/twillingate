@@ -22,6 +22,9 @@ type DashboardInfo struct {
 	ArchivedAt string `json:"archived_at,omitempty"`
 	Sidebar    bool   `json:"sidebar"`     // its group is in the sidebar (spec 2026-10-05 D3)
 	ProjectTab bool   `json:"project_tab"` // a new project gets it as a tab; built-ins only, from the release
+	// Selectors are the pickers its page shows above the widgets, in
+	// order; always non-nil.
+	Selectors []Selector `json:"selectors"`
 }
 
 // Dashboards is list_dashboards' answer: every dashboard in sidebar
@@ -55,7 +58,10 @@ type WidgetInfo struct {
 	Source         Source          `json:"source"`
 	FollowsProject bool            `json:"follows_project"`
 	FollowsRange   bool            `json:"follows_range"`
-	ArchivedAt     string          `json:"archived_at,omitempty"`
+	// FollowsSelectors are the names of its dashboard's selectors it
+	// narrows by (followedSelectors), in their order; always non-nil.
+	FollowsSelectors []string `json:"follows_selectors"`
+	ArchivedAt       string   `json:"archived_at,omitempty"`
 }
 
 // DashboardDetail is get_dashboard's answer: the dashboard, which
@@ -207,7 +213,7 @@ func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, err
 		if w.ArchivedAt != "" {
 			continue
 		}
-		info := s.widgetInfo(w)
+		info := s.widgetInfo(w, out.Selectors)
 		out.FollowsProject = out.FollowsProject || info.FollowsProject
 		out.FollowsRange = out.FollowsRange || info.FollowsRange
 		out.Widgets = append(out.Widgets, info)
@@ -244,7 +250,7 @@ func (s *Service) Widgets(ctx context.Context, dashboardID int64, component stri
 			continue
 		}
 		out = append(out, ListedWidget{
-			WidgetInfo: s.widgetInfo(w),
+			WidgetInfo: s.widgetInfo(w, dashboards[w.DashboardID].Selectors),
 			Dashboard:  dashboards[w.DashboardID],
 			Position:   positions[w.DashboardID],
 		})
@@ -257,10 +263,13 @@ func dashboardInfo(d store.Dashboard) DashboardInfo {
 		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID, GroupTitle: d.GroupTitle,
 		ProjectID: d.LastProjectID,
 		Widgets:   d.LiveWidgets, ArchivedAt: d.ArchivedAt, Sidebar: d.Sidebar, ProjectTab: d.ProjectTab,
+		Selectors: storedSelectors(d.Selectors),
 	}
 }
 
-func (s *Service) widgetInfo(w store.Widget) WidgetInfo {
+// widgetInfo is w as the API returns it; sels are its dashboard's
+// selectors.
+func (s *Service) widgetInfo(w store.Widget, sels []Selector) WidgetInfo {
 	info := WidgetInfo{
 		ID: w.ID, DashboardID: w.DashboardID, Name: w.Name, Title: w.Title,
 		Width: w.Width, Height: w.Height, Props: json.RawMessage(w.Props),
@@ -274,6 +283,7 @@ func (s *Service) widgetInfo(w store.Widget) WidgetInfo {
 		info.Props = json.RawMessage(`{}`)
 	}
 	info.FollowsProject, info.FollowsRange = s.follows(w)
+	info.FollowsSelectors = followedSelectors(w, sels)
 	return info
 }
 

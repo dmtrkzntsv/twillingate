@@ -16,7 +16,7 @@ import (
 
 const shareCols = `s.id, COALESCE(s.widget_id,0), COALESCE(w.dashboard_id,0), COALESCE(d.title,''),
 	COALESCE(s.project_id,0), COALESCE(s.project_name,''), s.range_from, s.range_to, s.title, s.caption_project, s.caption_range, s.created_at,
-	COALESCE(s.archive_at,''), COALESCE(s.archived_at,'')`
+	COALESCE(s.archive_at,''), COALESCE(s.archived_at,''), s.selection`
 
 const shareFrom = ` FROM widget_shares s
 	LEFT JOIN widgets w ON w.id = s.widget_id
@@ -25,7 +25,7 @@ const shareFrom = ` FROM widget_shares s
 func scanShare(r rowScanner) (store.WidgetShare, error) {
 	var s store.WidgetShare
 	err := r.Scan(&s.ID, &s.WidgetID, &s.DashboardID, &s.DashboardTitle, &s.ProjectID, &s.ProjectName,
-		&s.From, &s.To, &s.Title, &s.CaptionProject, &s.CaptionRange, &s.CreatedAt, &s.ArchiveAt, &s.ArchivedAt)
+		&s.From, &s.To, &s.Title, &s.CaptionProject, &s.CaptionRange, &s.CreatedAt, &s.ArchiveAt, &s.ArchivedAt, &s.Selection)
 	return s, err
 }
 
@@ -52,12 +52,12 @@ func (d *DB) InsertWidgetShare(ctx context.Context, n store.NewWidgetShare, a st
 		// share with no project, which names none.
 		res, err := tx.ExecContext(ctx, `INSERT INTO widget_shares
 			(id, widget_id, project_id, range_from, range_to, title, project_name, caption_project, caption_range,
-			 image, image_2x, archive_at)
-			SELECT ?1, ?2, p.id, ?3, ?4, ?5, p.name, ?6 AND p.id IS NOT NULL, ?7, ?8, ?9, NULLIF(?10, '')
+			 image, image_2x, archive_at, selection)
+			SELECT ?1, ?2, p.id, ?3, ?4, ?5, p.name, ?6 AND p.id IS NOT NULL, ?7, ?8, ?9, NULLIF(?10, ''), ?12
 			FROM (SELECT 1) LEFT JOIN projects p ON p.id = ?11
 			WHERE ?11 = 0 OR p.id IS NOT NULL`,
 			n.ID, n.WidgetID, n.From, n.To, n.Title, n.CaptionProject, n.CaptionRange,
-			n.Image, n.Image2x, n.ArchiveAt, n.ProjectID)
+			n.Image, n.Image2x, n.ArchiveAt, n.ProjectID, n.Selection)
 		if err != nil {
 			return err
 		}

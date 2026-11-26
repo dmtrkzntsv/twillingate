@@ -247,8 +247,9 @@ type Store interface {
 	ListWidgets(ctx context.Context, dashboardID int64) ([]Widget, error)
 	GetWidget(ctx context.Context, id int64) (Widget, error)
 	InsertDashboard(ctx context.Context, d Dashboard, ws []Widget, a AuditEntry) (int64, error)
-	// UpdateDashboard writes d's title, sort_key, group_id and sidebar: a
-	// row read from the store keeps its sidebar.
+	// UpdateDashboard writes d's title, sort_key, group_id, sidebar and
+	// selectors (an empty Selectors is written as "[]"): a row read from the
+	// store keeps its sidebar and selectors.
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
 	// MoveDashboards rewrites group_id and sort_key of every row in ks in
@@ -398,7 +399,7 @@ type Store interface {
 	// ends it unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
 	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a AuditEntry) error
 	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error
-	// Alerts (migration 051), every mutation audited in its transaction.
+	// Alerts (migration 052), every mutation audited in its transaction.
 	// CreateAlert refuses a taken live name and a project already holding max
 	// live alerts with ErrConflict, an unknown project with ErrNotFound; the new
 	// alert asks for a check at now. UpdateAlert changes the alert's name,

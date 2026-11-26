@@ -16,6 +16,8 @@ export interface ShareCardProps {
   /** The range's first and last day, YYYY-MM-DD; left out, like the project, when the widget does not follow it. */
   from?: string
   to?: string
+  /** What is picked of the dashboard's selectors that the widget follows, one "Label: v1, v2" each; left out at All. */
+  selection?: string[]
   /** Called once the widget has drawn, under Inter, after a lazy one (map, markdown) has loaded. */
   onReady?: () => void
 }
@@ -97,7 +99,7 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(function Sha
   const fontsReady = useCardFonts({
     bold: p.title,
     // The data's own text too (labels, markdown), so a non-Latin label's subset is in before the widget draws.
-    regular: `${p.projectName ?? ''} · ${range ?? ''} twillingate.dev 0123456789 ${JSON.stringify(p.data ?? '').slice(0, 2000)}`,
+    regular: `${p.projectName ?? ''} · ${range ?? ''} ${p.selection?.join(' · ') ?? ''} twillingate.dev 0123456789 ${JSON.stringify(p.data ?? '').slice(0, 2000)}`,
   })
   const title = useTwoLineTitle(p.title, fontsReady)
   return (
@@ -114,10 +116,11 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(function Sha
         {title.shown}
       </h2>
       {/* Only what the widget follows; with neither, no line at all. A long project name gives way to the range. */}
-      {(p.projectName || range) && (
+      {(p.projectName || range || p.selection) && (
         <p data-share-meta className="mt-2 flex min-w-0 text-[22px] whitespace-pre text-muted-foreground">
           {p.projectName && <span className="truncate">{p.projectName}</span>}
           {range && <span className="shrink-0">{p.projectName ? ` · ${range}` : range}</span>}
+          {p.selection && <span className="truncate">{p.projectName || range ? ` · ${p.selection.join(' · ')}` : p.selection.join(' · ')}</span>}
         </p>
       )}
       <div className="relative mt-6 min-h-0 flex-1">

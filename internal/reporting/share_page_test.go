@@ -5,10 +5,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 const nastyTitle = `<script>alert(1)</script> "q" & co`
@@ -254,4 +258,99 @@ func TestRangeInWords(t *testing.T) {
 			t.Errorf("rangeInWords(%s, %s) = %q, want %q", c.from, c.to, got, c.want)
 		}
 	}
+}
+
+// selectionShareEnv is a share environment whose dashboard has the
+// deployment and campaign selectors, a widget that follows both
+// (hostStat) and one that follows neither (identitiesStat).
+func selectionShareEnv(t *testing.T) (e *shareEnv, h http.Handler, follows, free int64) {
+	t.Helper()
+	e = &shareEnv{now: new(time.Time)}
+	*e.now = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	e.svc, e.st = newTestServiceOpts(t, Options{
+		Native: &captureNative{}, ShareBaseURL: "https://c.example", ArchivedDays: 30,
+		Now: func() time.Time { return *e.now },
+	}, 1000)
+	if err := e.st.SyncReporting(context.Background(), store.ReportingSync{
+		Hash: "query", Version: "test", Components: []store.Component{oneComponent(t, queryStat).row()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.projectID = mustCreateProject(t, e.st, "blog")
+	d := mustCreateWith(t, e.svc, "DD", []Selector{deploymentSel, campaignSel},
+		queryStatSpec("f", hostStat), queryStatSpec("i", identitiesStat))
+	e.widgetID = d.Widgets[0].ID
+	mux := http.NewServeMux()
+	mux.Handle("GET /share/{file}", e.svc.SharePages())
+	return e, mux, d.Widgets[0].ID, d.Widgets[1].ID
+}
+
+// TestShareStoresSelection: a share keeps the picked values of the
+// selectors its widget follows and its page captions them with the
+// selector's label; at All, or with only selectors the widget does not
+// follow, it stores "" and captions nothing more.
+func TestShareStoresSelection(t *testing.T) {
+	e, h, follows, free := selectionShareEnv(t)
+	ctx := context.Background()
+	share := func(widget int64, sel map[string][]string) (WidgetShareOut, string) {
+		in := e.input(t)
+		in.WidgetID, in.Selection = widget, sel
+		out, err := e.svc.CreateWidgetShare(ctx, "test", in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := e.st.GetWidgetShare(ctx, out.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, row.Selection
+	}
+
+	out, stored := share(follows, map[string][]string{"deployment": {"cloud"}})
+	if !reflect.DeepEqual(out.Selection, map[string][]string{"deployment": {"cloud"}}) || stored != `{"deployment":["cloud"]}` {
+		t.Errorf("selection = %v, stored %q", out.Selection, stored)
+	}
+	body := getShare(h, out.ID).Body.String()
+	for _, want := range []string{
+		`<meta property="og:description" content="blog · Sep 1 – Sep 30, 2026 · Deployment: cloud">`,
+		`, blog, Sep 1 – Sep 30, 2026, Deployment: cloud">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %s", want)
+		}
+	}
+
+	out, _ = share(follows, map[string][]string{"campaign": {"a", "b"}, "deployment": {"cloud", "self-hosted"}})
+	if body := getShare(h, out.ID).Body.String(); !strings.Contains(body, "Sep 30, 2026 · Deployment: cloud, self-hosted · Campaign: a, b") {
+		t.Errorf("two selectors: page lacks both, in the dashboard's order:\n%s", body)
+	}
+
+	for name, sel := range map[string]map[string][]string{"empty": {}, "nil": nil, "no values": {"deployment": {}}} {
+		out, stored := share(follows, sel)
+		if stored != "" || len(out.Selection) != 0 || out.Selection == nil {
+			t.Errorf("%s: selection %v, stored %q; want {} and \"\"", name, out.Selection, stored)
+		}
+		if body := getShare(h, out.ID).Body.String(); strings.Contains(body, "Deployment") {
+			t.Errorf("%s: page names a selection", name)
+		}
+	}
+
+	out, stored = share(free, map[string][]string{"deployment": {"cloud"}})
+	if stored != "" || len(out.Selection) != 0 {
+		t.Errorf("a widget that follows none: selection %v, stored %q; want none", out.Selection, stored)
+	}
+
+	in := e.input(t)
+	in.Selection = map[string][]string{"nope": {"x"}}
+	_, err := e.svc.CreateWidgetShare(ctx, "test", in)
+	wantRefusal(t, err, store.ErrInvalid, "dashboard "+strconv.FormatInt(mustDashboardOf(t, e, follows), 10)+" has no selector nope")
+}
+
+func mustDashboardOf(t *testing.T, e *shareEnv, widget int64) int64 {
+	t.Helper()
+	w, err := e.st.GetWidget(context.Background(), widget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w.DashboardID
 }

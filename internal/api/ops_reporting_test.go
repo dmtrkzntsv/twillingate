@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -737,6 +740,90 @@ func TestUpdateDashboardWholeGroup(t *testing.T) {
 	}
 }
 
+// TestDashboardSelectors: selectors on create_dashboard and
+// update_dashboard, over MCP and REST: given, read back by get_dashboard
+// and list_dashboards, kept when an update leaves them out, cleared by
+// [], and refused with 400 when they break a rule.
+func TestDashboardSelectors(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	type selector struct {
+		Name   string `json:"name"`
+		Label  string `json:"label"`
+		Column string `json:"column"`
+	}
+	type dashboard struct {
+		ID        int64      `json:"dashboard_id"`
+		Title     string     `json:"title"`
+		Selectors []selector `json:"selectors"`
+	}
+	deployment := selector{Name: "deployment", Label: "deployment", Column: "attr_deployment"}
+	campaign := selector{Name: "campaign", Label: "Campaign", Column: "utm_campaign"}
+
+	var d dashboard
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Segments",
+		"selectors": []map[string]any{{"name": "deployment", "column": "attr_deployment"}}}, &d)
+	if !slices.Equal(d.Selectors, []selector{deployment}) {
+		t.Fatalf("create_dashboard selectors = %+v", d.Selectors)
+	}
+	var got dashboard
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": d.ID}, &got)
+	if !slices.Equal(got.Selectors, []selector{deployment}) {
+		t.Errorf("get_dashboard selectors = %+v", got.Selectors)
+	}
+
+	path := fmt.Sprintf("/api/dashboards/%d", d.ID)
+	patch := func(body string) dashboard {
+		t.Helper()
+		rec := serveREST(t, r, "PATCH", path, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PATCH %s = %d %s", body, rec.Code, rec.Body.String())
+		}
+		var out dashboard
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if out := patch(`{"title":"Segments 2"}`); !slices.Equal(out.Selectors, []selector{deployment}) {
+		t.Errorf("PATCH title: selectors = %+v, want them kept", out.Selectors)
+	}
+	if out := patch(`{"selectors":[{"name":"campaign","label":"Campaign","column":"utm_campaign"}]}`); !slices.Equal(out.Selectors, []selector{campaign}) || out.Title != "Segments 2" {
+		t.Errorf("PATCH selectors = %+v", out)
+	}
+	if out := patch(`{"selectors":[]}`); out.Selectors == nil || len(out.Selectors) != 0 {
+		t.Errorf("PATCH selectors [] = %#v, want an empty list", out.Selectors)
+	}
+	var info dashboard
+	toolJSON(t, cs, "update_dashboard", map[string]any{"dashboard_id": d.ID,
+		"selectors": []map[string]any{{"name": "campaign", "label": "Campaign", "column": "utm_campaign"}}}, &info)
+	if !slices.Equal(info.Selectors, []selector{campaign}) {
+		t.Errorf("update_dashboard selectors = %+v", info.Selectors)
+	}
+	toolJSON(t, cs, "update_dashboard", map[string]any{"dashboard_id": d.ID, "title": "Segments 3"}, &info)
+	if !slices.Equal(info.Selectors, []selector{campaign}) {
+		t.Errorf("update_dashboard title: selectors = %+v, want them kept", info.Selectors)
+	}
+	toolJSON(t, cs, "update_dashboard", map[string]any{"dashboard_id": d.ID, "selectors": []any{}}, &info)
+	if info.Selectors == nil || len(info.Selectors) != 0 {
+		t.Errorf("update_dashboard selectors [] = %#v, want an empty list", info.Selectors)
+	}
+
+	rec := serveREST(t, r, "POST", "/api/dashboards", `{"title":"Rest","selectors":[{"name":"campaign","label":"Campaign","column":"utm_campaign"}]}`)
+	var created dashboard
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &created) != nil || !slices.Equal(created.Selectors, []selector{campaign}) {
+		t.Errorf("POST with selectors = %d %s", rec.Code, rec.Body.String())
+	}
+	for _, body := range []string{`{"selectors":[{"name":"x","column":"day"}]}`, `{"selectors":[{"name":"from","column":"host"}]}`} {
+		if rec := serveREST(t, r, "PATCH", path, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("PATCH %s = %d %s, want 400", body, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := serveREST(t, r, "PATCH", "/api/dashboards/1", `{"selectors":[]}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("PATCH a system dashboard's selectors = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+}
+
 // projectTabs is list_project_tabs' answer, decoded.
 type projectTabs struct {
 	Tabs []struct {
@@ -899,5 +986,160 @@ func TestNarrowSchemaListsTheFilterOps(t *testing.T) {
 		if !slices.Contains(ops, any("ever")) || !slices.Contains(ops, any("any_of")) {
 			t.Errorf("%s: where's op enum = %v", name, ops)
 		}
+	}
+}
+
+// TestWidgetDataSelectors: the picked values reach a query widget from
+// widget_data's selectors text, the GET query string, a stream item's
+// object and a preview's dashboard_id and selectors; a name the
+// dashboard lacks and selectors that are no JSON object are a 400.
+func TestWidgetDataSelectors(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	const content = `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	var d struct {
+		ID      int64 `json:"dashboard_id"`
+		Widgets []struct {
+			ID int64 `json:"widget_id"`
+		} `json:"widgets"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Hosts",
+		"selectors": []map[string]any{{"name": "site", "column": "host"}},
+		"widgets":   []any{map[string]any{"component": "stat", "source": map[string]any{"type": "query", "content": content}}},
+	}, &d)
+	id := d.Widgets[0].ID
+	type envelope struct {
+		Data struct {
+			Rows [][]string `json:"rows"`
+		} `json:"data"`
+	}
+	value := func(e envelope) string {
+		t.Helper()
+		if len(e.Data.Rows) != 1 || len(e.Data.Rows[0]) != 1 {
+			t.Fatalf("rows %v, want one value", e.Data.Rows)
+		}
+		return e.Data.Rows[0][0]
+	}
+	args := func(selectors string) map[string]any {
+		return map[string]any{"widget_id": id, "project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "selectors": selectors}
+	}
+	var all, none envelope
+	toolJSON(t, cs, "widget_data", args(""), &all)
+	toolJSON(t, cs, "widget_data", args(`{"site":["no.such.host"]}`), &none)
+	if value(all) == "0" || value(none) != "0" {
+		t.Errorf("All = %s, a host nobody visited = %s; want views, then 0", value(all), value(none))
+	}
+	for sel, msg := range map[string]string{
+		`{"campaign":["a"]}`:   fmt.Sprintf("dashboard %d has no selector campaign", d.ID),
+		`["no.such.host"]`:     "selectors: not a JSON object",
+		`{"site":"one"}`:       "selectors: not a JSON object",
+		`{"site":["a"]} extra`: "selectors: not a JSON object",
+	} {
+		res := callTool(t, cs, "widget_data", args(sel))
+		if !res.IsError || !strings.Contains(textOf(res), msg) {
+			t.Errorf("selectors %s = %s, want a refusal naming %q", sel, textOf(res), msg)
+		}
+		target := fmt.Sprintf("/api/widgets/%d/data?project_id=1&from=2026-08-20&to=2026-08-21&selectors=%s", id, url.QueryEscape(sel))
+		if rec := serveREST(t, r, "GET", target, ""); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), msg) {
+			t.Errorf("GET selectors %s = %d %s, want 400", sel, rec.Code, rec.Body.String())
+		}
+	}
+
+	target := fmt.Sprintf("/api/widgets/%d/data?project_id=1&from=2026-08-20&to=2026-08-21&selectors=%s", id, url.QueryEscape(`{"site":["no.such.host"]}`))
+	rec := serveREST(t, r, "GET", target, "")
+	var got envelope
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || value(got) != "0" {
+		t.Errorf("GET %s = %d %s, want 0", target, rec.Code, rec.Body.String())
+	}
+
+	body := fmt.Sprintf(`{"widgets":[{"widget_id":%d,"project_id":1,"from":"2026-08-20","to":"2026-08-21","selectors":{"site":["no.such.host"]}},`+
+		`{"widget_id":%d,"project_id":1,"from":"2026-08-20","to":"2026-08-21","selectors":{"campaign":["a"]}}]}`, id, id)
+	rec = serveREST(t, r, "POST", "/api/widgets/stream", body)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"rows":[["0"]]`) ||
+		!strings.Contains(rec.Body.String(), fmt.Sprintf("dashboard %d has no selector campaign", d.ID)) {
+		t.Errorf("stream = %d %s, want the first narrowed to 0 and the second refused", rec.Code, rec.Body.String())
+	}
+
+	preview := func(extra string) *http.Response {
+		t.Helper()
+		rec := serveREST(t, r, "POST", "/api/widgets/preview", `{"component":"stat","source":{"type":"query","content":`+
+			strconv.Quote(content)+`},"project_id":1,"from":"2026-08-20","to":"2026-08-21"`+extra+`}`)
+		return rec.Result()
+	}
+	readValue := func(resp *http.Response) string {
+		t.Helper()
+		var p struct {
+			Rows [][]string `json:"rows"`
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &p) != nil || len(p.Rows) != 1 {
+			t.Fatalf("preview = %d %s", resp.StatusCode, b)
+		}
+		return p.Rows[0][0]
+	}
+	if v := readValue(preview(fmt.Sprintf(`,"dashboard_id":%d,"selectors":{"site":["no.such.host"]}`, d.ID))); v != "0" {
+		t.Errorf("preview narrowed = %s, want 0", v)
+	}
+	if v := readValue(preview(fmt.Sprintf(`,"dashboard_id":%d`, d.ID))); v != value(all) {
+		t.Errorf("preview at All = %s, want %s", v, value(all))
+	}
+	if resp := preview(`,"selectors":{"site":["a"]}`); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("preview selectors without dashboard_id = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestSelectorValues: the tool and the route answer the same, the REST
+// route reading project_id and picked repeated; a picked value the range
+// lacks stays with 0; an unknown selector is a 404 and too many projects
+// a 400.
+func TestSelectorValues(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	const content = `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	var d struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Hosts",
+		"selectors": []map[string]any{{"name": "site", "column": "host"}},
+		"widgets":   []any{map[string]any{"component": "stat", "source": map[string]any{"type": "query", "content": content}}},
+	}, &d)
+	type values struct {
+		Values []struct {
+			Value string `json:"value"`
+			Count int64  `json:"count"`
+		} `json:"values"`
+	}
+	var viaMCP, viaREST values
+	toolJSON(t, cs, "selector_values", map[string]any{"dashboard_id": d.ID, "name": "site", "project_ids": []int64{1},
+		"from": "2026-08-20", "to": "2026-08-21", "picked": []string{"no.such.host"}}, &viaMCP)
+	n := len(viaMCP.Values)
+	if n < 2 || viaMCP.Values[n-1].Value != "no.such.host" || viaMCP.Values[n-1].Count != 0 || viaMCP.Values[0].Count <= 0 {
+		t.Fatalf("values = %+v, want the seeded hosts, then no.such.host at 0", viaMCP.Values)
+	}
+	target := fmt.Sprintf("/api/dashboards/%d/selectors/site/values?project_id=1&from=2026-08-20&to=2026-08-21&picked=no.such.host", d.ID)
+	rec := serveREST(t, r, "GET", target, "")
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &viaREST) != nil || !reflect.DeepEqual(viaMCP, viaREST) {
+		t.Errorf("GET %s = %d %s, want the tool's answer %+v", target, rec.Code, rec.Body.String(), viaMCP)
+	}
+	rec = serveREST(t, r, "GET", target+"&project_id=1&search="+url.QueryEscape(viaMCP.Values[0].Value), "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), viaMCP.Values[0].Value) {
+		t.Errorf("a project twice, with a search = %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = serveREST(t, r, "GET", fmt.Sprintf("/api/dashboards/%d/selectors/nope/values?project_id=1&from=2026-08-20&to=2026-08-21", d.ID), "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown selector = %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	many := ""
+	for i := 1; i <= 11; i++ {
+		many += fmt.Sprintf("&project_id=%d", i)
+	}
+	rec = serveREST(t, r, "GET", fmt.Sprintf("/api/dashboards/%d/selectors/site/values?from=2026-08-20&to=2026-08-21%s", d.ID, many), "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "at most 10") {
+		t.Errorf("11 projects = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	rec = serveREST(t, r, "GET", fmt.Sprintf("/api/dashboards/%d/selectors/site/values?project_id=x&from=2026-08-20&to=2026-08-21", d.ID), "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("project_id=x = %d, want 400", rec.Code)
 	}
 }

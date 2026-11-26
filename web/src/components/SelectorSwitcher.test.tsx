@@ -1,0 +1,146 @@
+import { useState } from 'react'
+import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { endpoints, type SelectorValue } from '@/lib/api'
+import { renderWithProviders } from '@/test/render'
+import SelectorSwitcher from './SelectorSwitcher'
+
+const deployment = { name: 'deployment', label: 'Deployment', column: 'attr_deployment' }
+
+function values(n: number): SelectorValue[] {
+  return Array.from({ length: n }, (_, i) => ({ value: `v${i + 1}`, count: 100 - i }))
+}
+
+/** The switcher holding its own value, as a page holds it in the URL. */
+function Harness({ initial = [], onChange }: { initial?: string[]; onChange?: (v: string[]) => void }) {
+  const [value, setValue] = useState<string[]>(initial)
+  return (
+    <SelectorSwitcher
+      dashboardId={12}
+      selector={deployment}
+      value={value}
+      projectIds={[7, 1]}
+      from="2026-09-20"
+      to="2026-09-26"
+      onChange={(v) => {
+        setValue(v)
+        onChange?.(v)
+      }}
+    />
+  )
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('SelectorSwitcher', () => {
+  it('reads All, then the one value picked, then how many', async () => {
+    const user = userEvent.setup()
+    const load = vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({
+      values: [
+        { value: 'cloud', count: 40 },
+        { value: 'self-hosted', count: 12 },
+      ],
+    })
+    renderWithProviders(<Harness />)
+
+    await user.click(screen.getByRole('button', { name: 'Deployment: All' }))
+    const dialog = await screen.findByRole('dialog')
+    // The counts from selector_values, beside each value.
+    expect(await within(dialog).findByText('40')).toBeInTheDocument()
+    expect(load).toHaveBeenCalledWith(12, 'deployment', { project_id: [7, 1], from: '2026-09-20', to: '2026-09-26' })
+
+    await user.click(within(dialog).getByRole('checkbox', { name: 'cloud' }))
+    expect(screen.getByRole('button', { name: 'Deployment: cloud' })).toBeInTheDocument()
+    // The whole row ticks: its count as well as its box.
+    await user.click(within(dialog).getByText('12'))
+    expect(screen.getByRole('button', { name: 'Deployment: 2 selected' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('checkbox', { name: 'self-hosted' })).toBeChecked()
+    // Ticking does not ask again: the picked values stay listed on their own.
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the list with Clear', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'cloud', count: 4 }, { value: 'edge', count: 2 }] })
+    const onChange = vi.fn()
+    renderWithProviders(<Harness initial={['cloud', 'edge']} onChange={onChange} />)
+
+    await user.click(screen.getByRole('button', { name: 'Deployment: 2 selected' }))
+    await user.click(await screen.findByRole('button', { name: 'Clear' }))
+    expect(onChange).toHaveBeenLastCalledWith([])
+    expect(screen.getByRole('button', { name: 'Deployment: All' })).toBeInTheDocument()
+  })
+
+  it('shows no search box for 10 values, and one past 10 that searches on the server', async () => {
+    const user = userEvent.setup()
+    const load = vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: values(10) })
+    const { unmount } = renderWithProviders(<Harness />)
+    await user.click(screen.getByRole('button', { name: 'Deployment: All' }))
+    expect(await screen.findByRole('checkbox', { name: 'v10' })).toBeInTheDocument()
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+    unmount()
+
+    load.mockImplementation(async (_id, _name, q) => ({
+      values: q.search ? values(11).filter((v) => v.value.includes(q.search!)) : values(11),
+    }))
+    renderWithProviders(<Harness />)
+    await user.click(screen.getByRole('button', { name: 'Deployment: All' }))
+    const search = await screen.findByRole('searchbox', { name: 'Search Deployment' })
+    await user.type(search, 'v11')
+    await waitFor(() => expect(load).toHaveBeenLastCalledWith(12, 'deployment', expect.objectContaining({ search: 'v11' })))
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: 'v1' })).not.toBeInTheDocument())
+    // Narrowed to one value, the box stays, so typing can go on.
+    expect(screen.getByRole('checkbox', { name: 'v11' })).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Search Deployment' })).toBeInTheDocument()
+  })
+
+  it('sends the picks with the load, and ticking still loads once', async () => {
+    const user = userEvent.setup()
+    const load = vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'cloud', count: 4 }, { value: 'edge', count: 2 }] })
+    renderWithProviders(<Harness initial={['gone']} />)
+    await user.click(screen.getByRole('button', { name: 'Deployment: gone' }))
+    await screen.findByRole('checkbox', { name: 'edge' })
+    expect(load).toHaveBeenCalledWith(12, 'deployment', { project_id: [7, 1], from: '2026-09-20', to: '2026-09-26', picked: ['gone'] })
+    await user.click(screen.getByRole('checkbox', { name: 'edge' }))
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads the values when the selector points at another column', async () => {
+    const user = userEvent.setup()
+    const load = vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'cloud', count: 4 }] })
+    const props = { dashboardId: 12, value: [] as string[], projectIds: [7], from: '2026-09-20', to: '2026-09-26', onChange: () => {} }
+    const { client, rerender } = renderWithProviders(<SelectorSwitcher {...props} selector={deployment} />)
+    await user.click(screen.getByRole('button', { name: /Deployment/ }))
+    await screen.findByRole('checkbox', { name: 'cloud' })
+    expect(load).toHaveBeenCalledTimes(1)
+    rerender(
+      <QueryClientProvider client={client}>
+        <TooltipProvider>
+          <SelectorSwitcher {...props} selector={{ ...deployment, column: 'attr_plan' }} />
+        </TooltipProvider>
+      </QueryClientProvider>
+    )
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+  })
+
+  it('disables the rest at 100 picked and says why', async () => {
+    const user = userEvent.setup()
+    const picked = Array.from({ length: 100 }, (_v, i) => `p${i}`)
+    vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'extra', count: 1 }, { value: 'p0', count: 2 }] })
+    renderWithProviders(<Harness initial={picked} />)
+    await user.click(screen.getByRole('button', { name: 'Deployment: 100 selected' }))
+    expect(await screen.findByRole('checkbox', { name: 'extra' })).toBeDisabled()
+    expect(screen.getByText('At most 100 values')).toBeInTheDocument()
+    // A picked value can still be unticked.
+    const p0 = screen.getByRole('checkbox', { name: 'p0' })
+    expect(p0).toBeEnabled()
+    await user.click(p0)
+    expect(screen.getByRole('checkbox', { name: 'extra' })).toBeEnabled()
+    expect(screen.queryByText('At most 100 values')).not.toBeInTheDocument()
+  })
+})

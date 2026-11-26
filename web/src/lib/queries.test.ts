@@ -16,6 +16,7 @@ function widget(id: number, over: Partial<Widget> = {}): Widget {
     source: { type: 'sql', content: `SELECT ${id}` },
     follows_project: true,
     follows_range: true,
+    follows_selectors: [],
     ...over,
   }
 }
@@ -30,6 +31,7 @@ function detail(widgets: Widget[]): DashboardDetail {
     project_tab: false,
     follows_project: true,
     follows_range: true,
+    selectors: [],
     widgets,
     tabs: [{ dashboard_id: 7, title: 'Mine' }],
   }

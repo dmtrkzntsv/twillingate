@@ -51,9 +51,9 @@ func updAlert(t *testing.T, d *DB, project, id int64, e store.AlertEdit, now tim
 
 func ptr[T any](v T) *T { return &v }
 
-func TestMigration051CreatesAlertTables(t *testing.T) {
-	db := newTestDBAt(t, 50)
-	if err := db.migrateThrough(context.Background(), 51); err != nil {
+func TestMigration052CreatesAlertTables(t *testing.T) {
+	db := newTestDBAt(t, 51)
+	if err := db.migrateThrough(context.Background(), 52); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ typ, name string }{

@@ -20,6 +20,7 @@ type WidgetRequest struct {
 	ProjectID int64
 	From, To  string
 	Fresh     bool
+	Selectors map[string][]string // as DataRequest's, against this widget's dashboard
 }
 
 // WidgetResult is one widget's answer in a WidgetDataStream: Index is
@@ -112,7 +113,7 @@ func (s *Service) WidgetDataStream(ctx context.Context, reqs []WidgetRequest, em
 	}
 
 	for i, r := range reqs {
-		in := DataRequest{WidgetID: r.WidgetID, ProjectID: r.ProjectID, From: r.From, To: r.To, Fresh: r.Fresh}
+		in := DataRequest{WidgetID: r.WidgetID, ProjectID: r.ProjectID, From: r.From, To: r.To, Fresh: r.Fresh, Selectors: r.Selectors}
 		p, err := s.prepare(ctx, in)
 		switch {
 		case err != nil:

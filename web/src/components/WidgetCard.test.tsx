@@ -30,6 +30,7 @@ function statWidget(over: Partial<Widget> = {}): Widget {
     source: { type: 'sql', content: 'SELECT 1 AS value' },
     follows_project: true,
     follows_range: true,
+    follows_selectors: [],
     ...over,
   }
 }
@@ -389,6 +390,35 @@ describe('WidgetCard with a remote table', () => {
     expect(screen.queryByText('iOS')).not.toBeInTheDocument()
   })
 
+  it("shows the skeleton, not the last selectors' rows, while another selection loads or fails", async () => {
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.selectors) throw new ApiError(504, 'too slow', 'timeout')
+      return remoteAnswer(q)
+    })
+    const { client, rerender } = renderCard(remoteWidget())
+    await screen.findByText('iOS')
+    rerender(cardIn(client, remoteWidget(), { ...params, selectors: { deployment: ['cloud'] } }))
+    await waitFor(() => expect(screen.queryByText('iOS')).not.toBeInTheDocument())
+  })
+
+  it('goes back to the first page when a selector pick narrows the rows', async () => {
+    const user = userEvent.setup()
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockImplementation(async (_, q) => remoteAnswer(q, ATTR_ROWS, { matched: q.selectors ? 5 : 2500 }))
+    const { client, rerender } = renderCard(remoteWidget())
+    await screen.findByText('1–1,000 of 2,500')
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    await screen.findByText('1,001–2,000 of 2,500')
+
+    const picked = { ...params, selectors: { deployment: ['cloud'] }, selector_columns: { deployment: 'attr_deployment' } }
+    rerender(cardIn(client, remoteWidget(), picked))
+    await waitFor(() => expect(spy.mock.lastCall![1]).toMatchObject({ selectors: { deployment: ['cloud'] } }))
+    expect(spy.mock.lastCall![1]).not.toHaveProperty('offset')
+    // Never asked for the old page under the new pick.
+    expect(spy.mock.calls.some(([, q]) => q.selectors && q.offset)).toBe(false)
+  })
+
   it('refreshes with the filters, sort and page on screen', async () => {
     const user = userEvent.setup()
     storeView([PLAN], { column: 'Count', dir: 'desc' })
@@ -498,6 +528,45 @@ describe('WidgetCard with a remote table', () => {
     await user.click(screen.getByRole('button', { name: 'Refresh Attributes' }))
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(2))
     expect(spy.mock.calls.map(([, q]) => q)).toEqual([params, { ...params, fresh: true }])
+  })
+})
+
+describe('WidgetCard selection note', () => {
+  const ctx: ShareContext = {
+    project: { id: 7, name: 'blog' },
+    from: '2026-09-20',
+    to: '2026-09-26',
+    rangeShown: true,
+    selectors: [
+      { name: 'deployment', label: 'Deployment', column: 'attr_deployment' },
+      { name: 'campaign', label: 'Campaign', column: 'utm_campaign' },
+    ],
+  }
+  const render = (selection: Record<string, string[]>, follows: string[] = []) => {
+    vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
+    return renderWithProviders(<WidgetCard widget={{ ...statWidget(), follows_selectors: follows }} params={params} share={{ ...ctx, selection }} />)
+  }
+
+  it('says which set selector the card does not follow', async () => {
+    render({ deployment: ['cloud'] })
+    expect(await screen.findByText('Not filtered by Deployment')).toBeInTheDocument()
+  })
+
+  it('names every unfollowed selector that is set, in the dashboard order', async () => {
+    render({ campaign: ['a'], deployment: ['cloud'] })
+    expect(await screen.findByText('Not filtered by Deployment, Campaign')).toBeInTheDocument()
+  })
+
+  it('says nothing about a followed selector, or one at All', async () => {
+    render({ deployment: ['cloud'], campaign: [] }, ['deployment'])
+    await screen.findByText('12.3K')
+    expect(screen.queryByText(/Not filtered/)).not.toBeInTheDocument()
+  })
+
+  it('has no note with nothing set', async () => {
+    render({})
+    await screen.findByText('12.3K')
+    expect(screen.queryByText(/Not filtered/)).not.toBeInTheDocument()
   })
 })
 

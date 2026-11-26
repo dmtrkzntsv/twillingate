@@ -12,7 +12,7 @@ import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
 import type { ArchiveAfter, Widget, WidgetShare } from '@/lib/api'
 import { captureCard } from '@/lib/capture'
 import { widgetSharesQuery } from '@/lib/queries'
-import { DEFAULT_ARCHIVE_AFTER, embedCode, shareCaption, type ShareContext } from '@/lib/share'
+import { DEFAULT_ARCHIVE_AFTER, embedCode, shareCaption, shareSelection, type ShareContext } from '@/lib/share'
 import { ArchiveAfterSelect } from './ArchiveAfterSelect'
 import { OffscreenCard } from './OffscreenCard'
 
@@ -102,6 +102,8 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     // The page names only what the card does.
     form.set('caption_project', caption.projectName !== undefined ? '1' : '0')
     form.set('caption_range', caption.from !== undefined ? '1' : '0')
+    // Only the selectors the widget follows, with values: the server names them on the page.
+    form.set('selection', JSON.stringify(shareSelection(widget, share)))
     form.set('image', png(captured.image))
     form.set('image_2x', png(captured.image2x))
     const out = await actions.create(form)

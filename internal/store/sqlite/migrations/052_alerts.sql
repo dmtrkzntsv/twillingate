@@ -1,4 +1,4 @@
--- 051: alerts (spec 2026-11-24-alerts-design). One row per alert a project has
+-- 052: alerts (spec 2026-11-24-alerts-design). One row per alert a project has
 -- been given: its definition as one JSON object, whether it is paused or
 -- snoozed, the revision that counts its resets, the state the last evaluation
 -- left and what it read, and the manual check a request asks the runner for.

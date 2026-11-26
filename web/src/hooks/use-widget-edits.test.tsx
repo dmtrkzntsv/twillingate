@@ -29,6 +29,7 @@ const visits: Widget = {
   source: { type: 'sql', content: 'SELECT day AS x, views AS y FROM v' },
   follows_project: false,
   follows_range: false,
+  follows_selectors: [],
 }
 
 const draft: Draft = { title: 'Signups', component: 'stat', props: {}, code: 'sql', sql: 'SELECT 1 AS value', query: '', markdown: '' }
