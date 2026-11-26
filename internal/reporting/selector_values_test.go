@@ -149,3 +149,29 @@ func TestSelectorValuesUnknownName(t *testing.T) {
 		t.Errorf("unknown dashboard: %v, want not found", err)
 	}
 }
+
+// TestSelectorValuesRepeatedProjects: a project named twice counts once,
+// against the cap and in the sums.
+func TestSelectorValuesRepeatedProjects(t *testing.T) {
+	svc, nat, d := valuesSetup(t, map[int64][][]string{1: {{"cloud", "5"}}})
+	ids := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1}
+	got, err := svc.SelectorValues(context.Background(), valuesIn(d, ids...))
+	if err != nil {
+		t.Fatalf("11 ids with a repeat: %v, want accepted", err)
+	}
+	if want := []SelectorValue{{"cloud", 5}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("values = %v, want %v", got, want)
+	}
+	if len(nat.qs) != 10 {
+		t.Errorf("%d queries, want 10", len(nat.qs))
+	}
+}
+
+// TestSelectorValuesBadCount: a count that is no number is an error, not
+// a value silently left out.
+func TestSelectorValuesBadCount(t *testing.T) {
+	svc, _, d := valuesSetup(t, map[int64][][]string{1: {{"cloud", "many"}}})
+	if _, err := svc.SelectorValues(context.Background(), valuesIn(d, 1)); err == nil {
+		t.Error("a count of \"many\": err = nil, want an error")
+	}
+}

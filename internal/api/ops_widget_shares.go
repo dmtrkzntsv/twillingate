@@ -135,7 +135,7 @@ func readShareUpload(w http.ResponseWriter, r *http.Request) (reporting.NewShare
 	if v, ok := form.Value["selection"]; ok {
 		sel, err := parseSelection(v[0])
 		if err != nil {
-			return reporting.NewShare{}, err
+			return reporting.NewShare{}, invalidf("selection: not a JSON object of selector names to lists of values, as {\"deployment\":[\"cloud\"]}")
 		}
 		in.Selection = sel
 	}

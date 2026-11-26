@@ -497,7 +497,7 @@ func TestCreateWidgetShareRESTSelection(t *testing.T) {
 	}
 	for sel, msg := range map[string]string{
 		`{"nope":["a"]}`: fmt.Sprintf("dashboard %d has no selector nope", d.ID),
-		`["a"]`:          "selectors: not a JSON object",
+		`["a"]`:          "selection: not a JSON object",
 	} {
 		if rec = post(sel); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), msg) {
 			t.Errorf("selection %s = %d %s, want 400 naming %q", sel, rec.Code, rec.Body.String(), msg)

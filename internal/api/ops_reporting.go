@@ -353,7 +353,7 @@ func (h *host) registerReporting(r *registrar) {
 		h.widgetData)
 
 	expose(r, spec{Name: "selector_values", Annotations: ro, Method: "GET", Path: d + "/selectors/{name}/values",
-		Description: "The values a dashboard's selector can take: its column's values over project_ids (1 to 10, merged) and from/to, by event count, the busiest first, at most 100, as {value, count}. search keeps the values that contain it, in any case. picked values stay in the list with a count of 0 when the range has none of them. Read through the native engine, so it costs what a widget does. Use it to find what to pass in widget_data's selectors."},
+		Description: "The values a dashboard's selector can take: its column's values over project_ids (1 to 10, merged) and from/to, by event count, the busiest first, at most 100, as {value, count}. search keeps the values that contain it, in any case, among each project's 1,000 busiest values of the column in the range. picked values stay in the list with a count of 0 when the range has none of them. Read through the native engine, so it costs what a widget does. Use it to find what to pass in widget_data's selectors."},
 		h.selectorValues)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),

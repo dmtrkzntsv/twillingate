@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,13 +57,14 @@ func (s *Service) SelectorValues(ctx context.Context, in SelectorValuesIn) ([]Se
 	if i < 0 {
 		return nil, store.Refuse(store.ErrNotFound, "dashboard %d has no selector %s", in.DashboardID, in.Name)
 	}
-	switch n := len(in.ProjectIDs); {
+	projects := slices.Compact(slices.Sorted(slices.Values(in.ProjectIDs)))
+	switch n := len(projects); {
 	case n == 0:
 		return nil, store.Refuse(store.ErrInvalid, "project_id: name at least one project")
 	case n > maxValueProjects:
 		return nil, store.Refuse(store.ErrInvalid, "project_id: %d projects; at most %d", n, maxValueProjects)
 	}
-	for _, p := range in.ProjectIDs {
+	for _, p := range projects {
 		if p <= 0 {
 			return nil, store.Refuse(store.ErrInvalid, "project_id: %d is not a project id", p)
 		}
@@ -81,8 +83,8 @@ func (s *Service) SelectorValues(ctx context.Context, in SelectorValuesIn) ([]Se
 	counts := map[string]int64{}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	errs := make([]error, len(in.ProjectIDs))
-	for j, p := range slices.Compact(slices.Sorted(slices.Values(in.ProjectIDs))) {
+	errs := make([]error, len(projects))
+	for j, p := range projects {
 		wg.Go(func() {
 			var rules archive.Rules
 			if qs.rules != nil {
@@ -98,12 +100,17 @@ func (s *Service) SelectorValues(ctx context.Context, in SelectorValuesIn) ([]Se
 			mu.Lock()
 			defer mu.Unlock()
 			for _, row := range res.Rows {
-				if len(row) < 2 || row[0] == "" {
+				if len(row) < 2 {
+					errs[j] = fmt.Errorf("reporting: selector values of project %d: a row of %d cells, want 2", p, len(row))
+					return
+				}
+				if row[0] == "" {
 					continue
 				}
 				n, err := strconv.ParseInt(row[1], 10, 64)
 				if err != nil {
-					continue
+					errs[j] = fmt.Errorf("reporting: selector values of project %d: count %q: %w", p, row[1], err)
+					return
 				}
 				counts[row[0]] += n
 			}

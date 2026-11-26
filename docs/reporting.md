@@ -160,7 +160,8 @@ its `label` and `column` can change.
 `project_ids` (1 to 10, merged; the page sends the project the switcher shows
 and every project a query widget fixes) and `from`/`to`, as `{value, count}` by
 event count, the busiest first, at most 100. `search` keeps the values that
-contain it, in any case, and `picked` values stay in the list with a count of 0
+contain it, in any case, among each project's 1,000 busiest values of the
+column in the range (a rarer value is not found by search), and `picked` values stay in the list with a count of 0
 when the range has none of them, so a viewer can untick them. It reads the
 column through the native engine, as a widget does. An empty value is not
 listed; a name the dashboard does not declare is a `404 not_found`, and no
