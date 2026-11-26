@@ -740,3 +740,23 @@ func TestSelectorPicksDedupedAndCapped(t *testing.T) {
 		t.Errorf("100 distinct plus a repeat: %v", err)
 	}
 }
+
+// TestSessionsHostFiltersEntryHost: a host selector narrows a sessions
+// widget on entry_host, and a views widget on host.
+func TestSessionsHostFiltersEntryHost(t *testing.T) {
+	nat := &captureNative{}
+	svc := selectorService(t, nat)
+	hostSel := Selector{Name: "host", Label: "Host", Column: "host"}
+	sessions := `{"query":{"kind":"stat","table":"sessions","metrics":[{"op":"count","as":"value"}]}}`
+	views := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	d := mustCreateWith(t, svc, "HH", []Selector{hostSel}, queryStatSpec("s", sessions), queryStatSpec("v", views))
+	for i, col := range []string{"entry_host", "host"} {
+		if _, err := svc.WidgetData(context.Background(), selectorReq(d.Widgets[i].ID, map[string][]string{"host": {"a.example"}})); err != nil {
+			t.Fatal(err)
+		}
+		want := []native.Filter{{Column: col, Op: "in", Values: []string{"a.example"}}}
+		if got := nat.last(t).Where; !reflect.DeepEqual(got, want) {
+			t.Errorf("widget %d: where = %v, want %v", i, got, want)
+		}
+	}
+}

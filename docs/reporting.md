@@ -43,9 +43,10 @@ are in [deployment.md](deployment.md).
   Measures and Availability, one group (the Reports entry). They are never archived:
   `update_dashboard` with `sidebar: false` takes the group out of the
   sidebar, and `remove_project_tab` takes one off a project's page. Every
-  other write refuses them. To customize one, call `duplicate_dashboard`:
-  the copy is a user dashboard you can edit. Duplicating never hides the
-  source.
+  other write refuses them. Views ships Host, Source, Medium and Campaign
+  selectors, set by the release like the rest. To customize one, call
+  `duplicate_dashboard`: the copy is a user dashboard you can edit.
+  Duplicating never hides the source.
 - **User dashboards** are what agents create. Their ids start at 1001.
 
 **A dashboard is shown in two places:** in the sidebar, by its group, and as
@@ -144,13 +145,15 @@ any key, sent yet or not; a day column (`day`, `user_first_seen`,
 `label` defaults to the column without `attr_`. `create_dashboard` and
 `update_dashboard` take `selectors` as the whole list (`[]` clears it); a
 group's tabs each have their own, `duplicate_dashboard` copies them, and a
-system dashboard has none. A viewer picks values of each, and nothing picked
+system dashboard has only the ones its release sets (Views: host, source,
+medium, campaign), which no write changes. A viewer picks values of each, and nothing picked
 means All. **A widget follows a selector** as it follows a switcher: a `query`
 widget on `events`, `views`, `product`, `measures` or `checks` follows each
 one whose column its table takes as a filter, on `sessions` only
-`utm_source`, `utm_medium`, `utm_campaign` and `referrer_source`, on
-`identities` none; a `sql` widget follows each one whose `:name` it reads (a
-`VARCHAR[]` of the picked values, the empty list for All); Markdown none.
+`utm_source`, `utm_medium`, `utm_campaign` and `referrer_source`, and `host`,
+which it filters as the session's `entry_host`, on `identities` none; a `sql`
+widget follows each one whose `:name` it reads (a `VARCHAR[]` of the picked
+values, the empty list for All); Markdown none.
 `get_dashboard` lists the dashboard's `selectors`, and each widget's
 `follows_selectors`, the names it follows. A selector a live `sql` widget
 reads cannot be removed or renamed (`409 conflict`, naming the widgets);

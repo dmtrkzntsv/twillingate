@@ -4,6 +4,12 @@
   "group_title": "Reports",
   "sidebar": true,
   "project_tab": true,
+  "selectors": [
+    {"name": "host", "label": "Host", "column": "host"},
+    {"name": "source", "label": "Source", "column": "utm_source"},
+    {"name": "medium", "label": "Medium", "column": "utm_medium"},
+    {"name": "campaign", "label": "Campaign", "column": "utm_campaign"}
+  ],
   "layout": [
     {"widget": "visitors", "width": 3, "height": 3},
     {"widget": "views", "width": 3, "height": 3},

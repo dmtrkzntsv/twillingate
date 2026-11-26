@@ -36,6 +36,7 @@ type fileDashboard struct {
 	GroupTitle   string       // the group's name; only on a group's founding dashboard (D6)
 	Sidebar      bool         // in the sidebar on first install; the same across a group (spec 2026-10-05 D6)
 	ProjectTab   bool         // a new project gets it as a tab; re-synced every release (spec 2026-10-05 D6)
+	Selectors    []Selector   // the release's: re-synced every time, checked by checkSelectors
 	Widgets      []fileWidget // layout order
 }
 
@@ -56,6 +57,7 @@ type fileDashboardDoc struct {
 	GroupTitle string           `json:"group_title"`
 	Sidebar    *bool            `json:"sidebar"`     // required: nil is a file that left it out
 	ProjectTab *bool            `json:"project_tab"` // required, as sidebar
+	Selectors  []Selector       `json:"selectors"`
 	Layout     []fileLayoutItem `json:"layout"`
 }
 
@@ -120,6 +122,11 @@ func loadDashboard(fsys fs.FS, dir string) (fileDashboard, error) {
 		if _, err := checkName("group_title", doc.GroupTitle); err != nil {
 			return fileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
 		}
+	}
+
+	sels, err := checkSelectors(doc.Selectors)
+	if err != nil {
+		return fileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
 	}
 
 	entries, err := fs.ReadDir(fsys, dir)
@@ -205,7 +212,7 @@ func loadDashboard(fsys fs.FS, dir string) (fileDashboard, error) {
 
 	return fileDashboard{
 		ID: doc.ID, Title: doc.Title, Group: doc.Group, GroupTitle: doc.GroupTitle,
-		Sidebar: *doc.Sidebar, ProjectTab: *doc.ProjectTab, Widgets: widgets,
+		Sidebar: *doc.Sidebar, ProjectTab: *doc.ProjectTab, Selectors: sels, Widgets: widgets,
 	}, nil
 }
 

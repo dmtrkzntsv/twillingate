@@ -173,16 +173,16 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 		if groupID == 0 {
 			groupID = dash.ID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab)
-			VALUES (?,?,?,?,?,?,?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab, selectors)
+			VALUES (?,?,?,?,?,?,?,?)
 			ON CONFLICT(id) DO UPDATE SET title=excluded.title, sort_key=excluded.sort_key,
-				group_id=excluded.group_id, project_tab=excluded.project_tab,
+				group_id=excluded.group_id, project_tab=excluded.project_tab, selectors=excluded.selectors,
 				sidebar=CASE WHEN dashboards.archived_at IS NULL THEN dashboards.sidebar ELSE 0 END,
 				archived_at=NULL,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 			WHERE dashboards.owner=?`,
 			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID,
-			dash.Sidebar, dash.ProjectTab, store.OwnerSystem,
+			dash.Sidebar, dash.ProjectTab, selectorsText(dash.Selectors), store.OwnerSystem,
 		); err != nil {
 			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)
 		}
