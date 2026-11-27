@@ -171,7 +171,7 @@ export default function Inbox() {
         <header className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
           <p className="max-w-prose text-sm text-muted-foreground">
-            Sites down and back up, certificates and domains failing or about to expire, and forms. Archive an item once it is handled.
+            Sites down and back up, certificates and domains failing or about to expire, alerts crossing their line, and forms. Archive an item once it is handled.
           </p>
         </header>
         <div className="flex max-w-4xl flex-wrap items-center justify-between gap-2">
