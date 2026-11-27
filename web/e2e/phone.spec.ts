@@ -546,7 +546,9 @@ test("the Alerts tab's lists and an alert's page fit a phone", async ({ page, re
   const { project_id: id } = (await created.json()) as { project_id: number }
   try {
     // Two alerts whose names are as long as a name may be (100 characters),
-    // far longer than a phone is wide: one live, one archived.
+    // far longer than a phone is wide: one live, one archived. Each starts
+    // with its own word, and ends in a letter rather than a space the server
+    // would trim.
     const longName = (start: string) => `${start} ${'an alert whose name goes on and on '.repeat(4)}`.slice(0, 100).replace(/ $/, 'x')
     const liveName = longName('Live')
     const archivedName = longName('Archived')

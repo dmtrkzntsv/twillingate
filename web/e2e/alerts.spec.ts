@@ -3,6 +3,7 @@ import { createAlert, createProject } from './forms'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
+const TOKEN = 'e2e-token'
 
 async function login(page: Page): Promise<void> {
   await page.goto('/app/')
@@ -42,11 +43,24 @@ test('an alert is listed, edited, checked, snoozed, woken, archived and restored
   await settings.getByLabel('Threshold', { exact: true }).fill('5')
   await settings.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText('Saved', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Checking…' })).toBeVisible()
-  // The runner serves it within a minute; whatever it finds, the check is no longer pending.
-  await expect(page.getByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled', 'true', { timeout: 90_000 })
-  await expect(page.getByRole('button', { name: 'Checking…' })).toHaveCount(0)
-  await expect(page.getByRole('region', { name: 'History' }).locator('tbody tr').first()).toBeVisible()
+  // The runner serves it on its next tick, within a minute; whatever it
+  // finds, the check is then no longer pending. Read from the server, since
+  // the page may show `Checking…` for a moment only, or not at all.
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get(`/api/projects/${id}/alerts`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+        const alerts = ((await res.json()) as { alerts: { id: number; check_pending: boolean }[] }).alerts
+        return alerts.find((a) => a.id === alertId)?.check_pending
+      },
+      { timeout: 90_000, intervals: [2_000] }
+    )
+    .toBe(false)
+  // The page reads the list every 2 s while the check is pending, and follows.
+  const checkNow = page.getByRole('button', { name: 'Check now' })
+  await expect(checkNow).toBeVisible({ timeout: 10_000 })
+  await expect(checkNow).not.toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('region', { name: 'History' }).locator('tbody tr').first()).toBeVisible({ timeout: 10_000 })
 
   // Snooze for a day, then wake.
   await page.getByRole('button', { name: 'Snooze', exact: true }).click()
