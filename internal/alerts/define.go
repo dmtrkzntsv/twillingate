@@ -564,3 +564,20 @@ func CheckName(name string) error {
 	}
 	return nil
 }
+
+// Unit is what p's value reads in, as the console formats it: count,
+// fraction, number, or hours (a silence alert's age); "" for the zero
+// Parsed, a broken alert's.
+func (p Parsed) Unit() string {
+	switch p.Read {
+	case readCount:
+		return "count"
+	case readFraction:
+		return "fraction"
+	case readNumber:
+		return "number"
+	case readSilence:
+		return "hours"
+	}
+	return ""
+}

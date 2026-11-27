@@ -207,9 +207,9 @@ func (e *Evaluator) ruleBreak(ctx context.Context, projectID int64, p Parsed) st
 	case !ok:
 		return ""
 	case h.to != h.name:
-		return "renamed to " + h.to + ": " + h.name
+		return "A rule renamed " + h.name + " to " + h.to
 	}
-	return "blocked: " + h.name
+	return "A rule blocked " + h.name
 }
 
 // neverSent is the first event or attribute p's query names that the

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { attributesListed, trackWithAttributes } from './attributes'
-import { createProject, submitJSON } from './forms'
+import { createAlert, createProject, submitJSON } from './forms'
 import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
@@ -248,5 +248,32 @@ test("a dashboard's selector and its checklist show the pointer", async ({ page,
     expect(await withoutPointer(page), 'selector checklist').toEqual([])
   } finally {
     await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
+  }
+})
+
+test("the Alerts pages show the pointer: the list, an alert's page and its snooze menu", async ({ page, request }) => {
+  // A template alert, so its page shows the template's fields and their selects beside the condition.
+  const project = await createProject(request, `cursor-alerts-${Date.now()}`, [])
+  const { id: alertId } = await createAlert(request, project.id, {
+    name: 'Page views',
+    template: 'event_count',
+    fields: { event: '$page_view' },
+    condition: { type: 'threshold', op: 'below', value: 1 },
+  })
+  try {
+    await login(page)
+    await page.goto(`/app/projects/${project.id}/alerts`)
+    await expect(page.getByRole('list', { name: 'Alerts' }).getByRole('link', { name: /^Page views/ })).toBeVisible()
+    expect(await withoutPointer(page), 'alerts list').toEqual([])
+    await page.goto(`/app/projects/${project.id}/alerts/${alertId}`)
+    await expect(page.getByRole('form', { name: 'Alert settings' }).getByLabel('Threshold', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Backtest' })).toBeVisible()
+    expect(await withoutPointer(page), 'alert page').toEqual([])
+    await page.getByRole('button', { name: 'Snooze' }).click()
+    await expect(page.getByRole('menuitem').first()).toBeVisible()
+    expect(await withoutPointer(page), 'snooze menu').toEqual([])
+    await page.keyboard.press('Escape')
+  } finally {
+    await request.post(`/api/projects/${project.id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
   }
 })

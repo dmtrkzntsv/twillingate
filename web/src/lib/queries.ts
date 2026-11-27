@@ -122,6 +122,28 @@ export const widgetSharesQuery = (q: { widget_id?: number; state?: ShareState })
   queryFn: () => endpoints.widgetShares(q),
 })
 
+/** A project's alerts, the live ones or the archived ones. */
+export const alertsQuery = (projectId: number, archived = false) => ({
+  queryKey: ['alerts', projectId, archived] as const,
+  queryFn: () => endpoints.alerts(projectId, archived),
+})
+
+/** An alert's evaluations, newest first, a page at a time. */
+export const alertHistoryQuery = (projectId: number, id: number) =>
+  infiniteQueryOptions({
+    queryKey: ['alert-history', projectId, id],
+    queryFn: ({ pageParam }) => endpoints.alertHistory(projectId, id, pageParam || undefined),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next_cursor,
+  })
+
+/** A saved alert's backtest, of its definition (`definition`, its `definitionKey`), so a new definition from anywhere reads it afresh and a rename, a pause or a snooze does not; the past does not change within minutes, so it is kept five. */
+export const alertPreviewQuery = (projectId: number, id: number, definition: string) => ({
+  queryKey: ['alert-preview', projectId, id, definition] as const,
+  queryFn: () => endpoints.previewAlert(projectId, { id }),
+  staleTime: 5 * 60_000,
+})
+
 /** A project's forms, the active ones or the archived ones. */
 export const formsQuery = (projectId: number, archived = false) => ({
   queryKey: ['forms', projectId, archived ? 'archived' : 'active'] as const,

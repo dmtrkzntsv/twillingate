@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { InboxIcon, PlusIcon, SettingsIcon } from 'lucide-react'
+import { BellIcon, InboxIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
+import AlertTabs from '@/components/alerts/AlertTabs'
 import FormTabs from '@/components/forms/FormTabs'
 import ReportTabs, { dashboardTabs } from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
@@ -9,7 +10,7 @@ import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, Project, ProjectTab } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
-import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, tabAfter, tabPath, type SettingsSection } from '@/lib/project-tabs'
+import { ALERTS_ID, FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, tabAfter, tabPath, type SettingsSection } from '@/lib/project-tabs'
 import { cn } from '@/lib/utils'
 import AddTabDialog from './AddTabDialog'
 import SettingsTabs from './SettingsTabs'
@@ -23,7 +24,9 @@ interface Props {
   project?: Project
   /** On Forms: the form on screen, none on `/forms` itself. */
   form?: string
-  /** The tab on screen: `SETTINGS_ID`, `FORMS_ID` or a dashboard id. */
+  /** On Alerts (`currentId` is `ALERTS_ID`): the alert on screen (`:alertId`), none on the lists. */
+  alert?: string
+  /** The tab on screen: `SETTINGS_ID`, `FORMS_ID`, `ALERTS_ID` or a dashboard id. */
   currentId: number
   /** The project's tabs, in order. */
   tabs: ProjectTab[]
@@ -38,22 +41,23 @@ interface Props {
   archived?: boolean
   /** On Settings (`currentId` is `SETTINGS_ID`): the Settings tab on screen. */
   section?: SettingsSection
-  /** While the project page is still landing, where a tab write would cancel its fetch: no Forms button, no "+" and no dragging. */
+  /** While the project page is still landing, where a tab write would cancel its fetch: no Alerts or Forms button, no "+" and no dragging. */
   readOnly?: boolean
 }
 
 /**
  * A project page's tab row (project landing D1, D4, D5): its dashboards in
  * the project's one order, any of them dragged to a new place, "+" after
- * them; then, outside the scrolling tabs, Forms (with the count of new
- * submissions) and Settings. Switching keeps the range in the URL.
+ * them; then, outside the scrolling tabs, Alerts, Forms (with the count
+ * of new submissions) and Settings. Switching keeps the range in the URL.
  *
  * On Settings the row holds the Settings tabs instead (project settings
- * tabs), and on Forms the project's forms (`FormTabs`): the page's title
- * goes back to the dashboards there (ProjectBackHeader), as the
- * highlighted gear does on Settings.
+ * tabs), on Forms the project's forms (`FormTabs`), and on Alerts its Live
+ * and Archived lists (`AlertTabs`): the page's title goes back to the
+ * dashboards there (ProjectBackHeader), as the highlighted gear does on
+ * Settings.
  */
-export default function ProjectTabBar({ projectId, project, form, currentId, tabs, dashboards, actions, newSubmissions, draftForms, archived = false, section, readOnly = false }: Props) {
+export default function ProjectTabBar({ projectId, project, form, alert, currentId, tabs, dashboards, actions, newSubmissions, draftForms, archived = false, section, readOnly = false }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
@@ -92,6 +96,8 @@ export default function ProjectTabBar({ projectId, project, form, currentId, tab
       ) : currentId === FORMS_ID ? (
         // The Forms pages show the forms instead: their title goes back to the dashboards (ProjectBackHeader).
         project && <FormTabs project={project} current={form} search={search} />
+      ) : currentId === ALERTS_ID ? (
+        <AlertTabs projectId={projectId} alertId={alert} search={search} />
       ) : (
         <ReportTabs
           tabs={dashboardTabs(tabs)}
@@ -109,6 +115,18 @@ export default function ProjectTabBar({ projectId, project, form, currentId, tab
         />
       )}
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        {!readOnly && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button asChild variant="ghost" size="icon" className={cn('size-8', current)} aria-current={currentId === ALERTS_ID ? 'page' : undefined}>
+                <Link to={tabPath(projectId, ALERTS_ID, search)} aria-label="Alerts">
+                  <BellIcon />
+                </Link>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Alerts</TooltipContent>
+          </Tooltip>
+        )}
         {!readOnly && (
           <Tooltip>
             <TooltipTrigger asChild>

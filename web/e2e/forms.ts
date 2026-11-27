@@ -32,3 +32,18 @@ export async function submitJSON(request: APIRequestContext, key: string, name: 
     expect(res.status(), await res.text()).toBe(201)
   }).toPass({ timeout: 15_000 })
 }
+
+/**
+ * A new alert on the project, as an agent makes one (`body` is what
+ * create_alert takes, but the project), through the console API; it
+ * starts pending, with a check requested. Returns its id.
+ */
+export async function createAlert(request: APIRequestContext, projectId: number, body: Record<string, unknown>): Promise<{ id: number }> {
+  const res = await request.post(`/api/projects/${projectId}/alerts`, {
+    headers: { Authorization: `Bearer ${TOKEN}` },
+    data: body,
+  })
+  expect(res.ok(), await res.text()).toBeTruthy()
+  const alert = (await res.json()) as { id: number }
+  return { id: alert.id }
+}

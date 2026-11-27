@@ -104,7 +104,7 @@ func TestAlertAttributeRulesMatchAnyCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := alerts.NewEvaluator(nil, projects, nil, time.Second).Evaluate(ctx, store.Alert{ProjectID: p.ID, Def: def}, time.Now())
-	if o.Outcome != store.AlertBroken || o.Reason != "Renamed to attr_tier: attr_Plan" {
+	if o.Outcome != store.AlertBroken || o.Reason != "A rule renamed attr_Plan to attr_tier" {
 		t.Errorf("evaluation on attr_Plan = %s %q, want broken by the rename", o.Outcome, o.Reason)
 	}
 }

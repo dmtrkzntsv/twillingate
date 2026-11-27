@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { attributesListed } from './attributes'
-import { submitJSON } from './forms'
+import { createAlert, submitJSON } from './forms'
 import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
@@ -530,6 +530,70 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await check(page, '/app/archive')
   await expect(page.getByRole('region', { name: 'Projects' }).getByRole('link', { name: /^phone-/ })).toBeVisible()
   expect(await sidewaysScroll(page), 'archived projects').toEqual([])
+})
+
+test("the Alerts tab's lists and an alert's page fit a phone", async ({ page, request }) => {
+  // A check is served on the runner's next tick, up to a minute after it is asked for.
+  test.setTimeout(150_000)
+  const created = await request.post('/api/projects', {
+    headers: authHeaders(),
+    data: {
+      name: `alerts-${Date.now()} - longer than a phone is wide on one line`,
+      allowed_origins: ['https://www.a-long-subdomain.example.com', MONITORED],
+    },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { project_id: id } = (await created.json()) as { project_id: number }
+  try {
+    // Two alerts whose names are as long as a name may be (100 characters),
+    // far longer than a phone is wide: one live, one archived. Each starts
+    // with its own word, and ends in a letter rather than a space the server
+    // would trim.
+    const longName = (start: string) => `${start} ${'an alert whose name goes on and on '.repeat(4)}`.slice(0, 100).replace(/ $/, 'x')
+    const liveName = longName('Live')
+    const archivedName = longName('Archived')
+    const body = { template: 'event_count', fields: { event: '$page_view' }, condition: { type: 'threshold', op: 'below', value: 1 } }
+    const { id: alertId } = await createAlert(request, id, { name: liveName, ...body })
+    const { id: archivedId } = await createAlert(request, id, { name: archivedName, ...body })
+    const archived = await request.post(`/api/projects/${id}/alerts/${archivedId}/archive`, { headers: authHeaders() })
+    expect(archived.ok(), await archived.text()).toBeTruthy()
+
+    await page.goto('/app/')
+    await page.waitForURL(/\/oauth\/authorize\?/)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.waitForURL(/\/app\/projects$/)
+
+    // Each list, drawn with its long row: the name truncates, the value and state stack beside it.
+    for (const [path, name] of [
+      [`/app/projects/${id}/alerts`, liveName],
+      [`/app/projects/${id}/alerts?show=archived`, archivedName],
+    ]) {
+      await check(page, path)
+      await expect(page.getByRole('list', { name: 'Alerts' }).getByRole('link', { name: new RegExp(`^${name}`) })).toBeVisible()
+      expect(await sidewaysScroll(page), path).toEqual([])
+    }
+
+    // The live alert's page once its first check is served, so History has a
+    // row: the table folds its wide columns away on the phone.
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(`/api/projects/${id}/alerts`, { headers: authHeaders() })
+          const alerts = ((await res.json()) as { alerts: { id: number; check_pending: boolean }[] }).alerts
+          return alerts.find((a) => a.id === alertId)?.check_pending
+        },
+        { timeout: 90_000, intervals: [2_000] }
+      )
+      .toBe(false)
+    const path = `/app/projects/${id}/alerts/${alertId}`
+    await check(page, path)
+    await expect(page.getByRole('heading', { name: liveName })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'History' }).locator('tbody tr').first()).toBeVisible()
+    expect(await sidewaysScroll(page), path).toEqual([])
+  } finally {
+    await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
+  }
 })
 
 test('the empty Projects guide and the install dialog fit a phone', async ({ page, request }) => {

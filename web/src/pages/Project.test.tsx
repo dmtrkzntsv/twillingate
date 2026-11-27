@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
+import { alert } from '@/test/alerts'
 import { contactPage, form } from '@/test/forms'
 import { renderWithProviders, testClient } from '@/test/render'
 import Project from './Project'
@@ -85,6 +86,8 @@ function renderAt(path: string, client = testClient()) {
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
         <Route path="/projects/:id/forms/:name" element={<Project tab="forms" />} />
+        <Route path="/projects/:id/alerts" element={<Project tab="alerts" />} />
+        <Route path="/projects/:id/alerts/:alertId" element={<Project tab="alerts" />} />
       </Routes>
       <LocationProbe />
     </MemoryRouter>,
@@ -302,6 +305,43 @@ describe('Project', () => {
     expect(screen.getByRole('button', { name: 'Find a person' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
     expect(location()).toBe('/projects/4/forms?range=30d')
+  })
+
+  it('heads the Alerts page with the back button, Live and Archived as its tabs, and the alerts', async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert({ id: 12, project_id: 4, name: 'Signups' })] })
+    renderAt('/projects/4/alerts?range=30d')
+    await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Back to the dashboards of econumo.com' })).toHaveAttribute('href', '/projects/4/dashboards/1?range=30d'))
+    const lists = screen.getByRole('navigation', { name: 'Alert lists' })
+    expect(within(lists).getAllByRole('link').map((l) => l.textContent)).toEqual(['Live', 'Archived'])
+    expect(within(lists).getByRole('link', { name: 'Live' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Alerts' })).toHaveAttribute('aria-current', 'page')
+    const list = await screen.findByRole('list', { name: 'Alerts' })
+    expect(within(list).getByRole('link', { name: /^Signups/ })).toHaveAttribute('href', '/projects/4/alerts/12?range=30d')
+    expect(endpoints.alerts).toHaveBeenCalledWith(4, false)
+  })
+
+  it("shows no list on an alert's own page, and its tab from the live list", async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert({ id: 12, project_id: 4 })] })
+    renderAt('/projects/4/alerts/12')
+    await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Live' })).toHaveAttribute('aria-current', 'page'))
+    expect(screen.getByRole('link', { name: 'Live' })).toHaveAttribute('href', '/projects/4/alerts')
+    expect(screen.getByRole('link', { name: 'Back to the dashboards of econumo.com' })).toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: 'Alerts' })).toBeNull()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Signups' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument()
+  })
+
+  it('opens an archived alert from its link, under Archived, with Restore', async () => {
+    vi.spyOn(endpoints, 'alerts').mockImplementation(async (_p: number, archived = false) => ({
+      max_live: 50,
+      alerts: archived ? [alert({ id: 12, project_id: 4, name: 'Old signups', archived_at: '2026-11-20T10:00:00Z' })] : [],
+    }))
+    renderAt('/projects/4/alerts/12')
+    expect(await screen.findByRole('heading', { level: 2, name: 'Old signups' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Archived' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('keeps the Archived badge beside the back button', async () => {
@@ -647,6 +687,15 @@ describe('Project tabs', () => {
     renderAt('/projects/7/forms')
     // Lands on the form, then loads its table.
     await screen.findByRole('table', {}, { timeout: 5000 })
+    await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
+    expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
+  })
+
+  it('shows no notice on the Alerts page', async () => {
+    vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 }] })
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [] })
+    renderAt('/projects/7/alerts')
+    await screen.findByRole('region', { name: 'No alerts yet' })
     await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
     expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
   })

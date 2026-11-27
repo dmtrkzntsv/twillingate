@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProjectTab } from './api'
-import { FORMS_ID, landingPath, pickerSections, rangeParams, SETTINGS_ID, settingsPath, settingsSection, settingsSections, tabAfter, tabPath } from './project-tabs'
+import { ALERTS_ID, alertPath, FORMS_ID, landingPath, pickerSections, rangeParams, SETTINGS_ID, settingsPath, settingsSection, settingsSections, tabAfter, tabPath } from './project-tabs'
 import { dashboardsList } from '@/test/fixtures'
 
 const tabs: ProjectTab[] = [
@@ -47,12 +47,26 @@ describe('tabPath', () => {
     expect(tabPath(7, FORMS_ID, 'range=30d')).toBe('/projects/7/forms?range=30d')
   })
 
+  it('opens Alerts at /alerts, an id no dashboard, Forms or Settings has', () => {
+    expect([SETTINGS_ID, FORMS_ID]).not.toContain(ALERTS_ID)
+    expect(ALERTS_ID).toBeLessThan(1)
+    expect(tabPath(3, ALERTS_ID)).toBe('/projects/3/alerts')
+    expect(tabPath(3, ALERTS_ID, 'range=7d')).toBe('/projects/3/alerts?range=7d')
+  })
+
   it('appends a search when there is one', () => {
     expect(tabPath(7, SETTINGS_ID, 'range=30d')).toBe('/projects/7/settings?range=30d')
     expect(tabPath(7, 13, 'range=custom&from=2026-09-01&to=2026-09-10')).toBe(
       '/projects/7/dashboards/13?range=custom&from=2026-09-01&to=2026-09-10'
     )
     expect(tabPath(7, 13, '')).toBe('/projects/7/dashboards/13')
+  })
+})
+
+describe('alertPath', () => {
+  it('opens one alert under /alerts, keeping the search', () => {
+    expect(alertPath(3, 12)).toBe('/projects/3/alerts/12')
+    expect(alertPath(3, 12, 'range=7d')).toBe('/projects/3/alerts/12?range=7d')
   })
 })
 
