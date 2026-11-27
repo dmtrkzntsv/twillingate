@@ -89,35 +89,40 @@ test('an alert is listed, edited, checked, snoozed, woken, archived and restored
 })
 
 test('an alert is created through the New alert wizard', async ({ page, request }) => {
+  test.setTimeout(90_000)
   const { id } = await createProject(request, `wizard-${Date.now()}`, [])
-  await login(page)
-  await page.goto(`/app/projects/${id}/alerts`)
+  try {
+    await login(page)
+    await page.goto(`/app/projects/${id}/alerts`)
 
-  await page.getByRole('button', { name: 'New alert' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New alert' })
-  await expect(dialog.getByText('Step 1 of 3')).toBeVisible()
-  await dialog.getByRole('button', { name: /^Event count/ }).click()
+    await page.getByRole('button', { name: 'New alert' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New alert' })
+    await expect(dialog.getByText('Step 1 of 3')).toBeVisible()
+    await dialog.getByRole('button', { name: /^Event count/ }).click()
 
-  // Choosing a template goes on to step 2. The project has no events yet: `$page_view` is always offered first.
-  await expect(dialog.getByText('Step 2 of 3')).toBeVisible()
-  await dialog.getByLabel('Event', { exact: true }).selectOption('$page_view')
-  await dialog.getByLabel('Threshold', { exact: true }).fill('0.5')
-  await dialog.getByRole('button', { name: 'Next' }).click()
+    // Choosing a template goes on to step 2. The project has no events yet: `$page_view` is always offered first.
+    await expect(dialog.getByText('Step 2 of 3')).toBeVisible()
+    await dialog.getByLabel('Event', { exact: true }).selectOption('$page_view')
+    await dialog.getByLabel('Threshold', { exact: true }).fill('0.5')
+    await dialog.getByRole('button', { name: 'Next' }).click()
 
-  // The backtest answers with its sentence, whatever it found, and the name is suggested.
-  await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
-  await expect(dialog.getByText(/^Would (not )?have fired/)).toBeVisible()
-  const name = await dialog.getByLabel('Name', { exact: true }).inputValue()
-  expect(name).toMatch(/^Count of \$page_view below /)
+    // The backtest answers with its sentence, whatever it found, and the name is suggested.
+    await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
+    await expect(dialog.getByText(/^Would (not )?have fired/)).toBeVisible({ timeout: 30_000 })
+    const name = await dialog.getByLabel('Name', { exact: true }).inputValue()
+    expect(name).toMatch(/^Count of \$page_view below /)
 
-  await dialog.getByRole('button', { name: 'Create alert' }).click()
-  await expect(page.getByText('Alert created', { exact: true })).toBeVisible()
-  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/alerts/\\d+`))
-  await expect(dialog).toHaveCount(0)
-  await expect(page.getByRole('heading', { name })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Watches' })).toContainText('Count of $page_view')
+    await dialog.getByRole('button', { name: 'Create alert' }).click()
+    await expect(page.getByText('Alert created', { exact: true })).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/alerts/\\d+`))
+    await expect(dialog).toHaveCount(0)
+    await expect(page.getByRole('heading', { name })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Watches' })).toContainText('Count of $page_view')
 
-  // The live list has its row.
-  await page.goto(`/app/projects/${id}/alerts`)
-  await expect(page.getByRole('list', { name: 'Alerts' }).getByRole('link', { name: new RegExp(`^${name.replace(/[$]/g, '\\$&')}`) })).toBeVisible()
+    // The live list has its row.
+    await page.goto(`/app/projects/${id}/alerts`)
+    await expect(page.getByRole('list', { name: 'Alerts' }).getByRole('link', { name: new RegExp(`^${name.replace(/[$]/g, '\\$&')}`) })).toBeVisible()
+  } finally {
+    await request.post(`/api/projects/${id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+  }
 })

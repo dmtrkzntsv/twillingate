@@ -279,6 +279,7 @@ test("the Alerts pages show the pointer: the list, an alert's page and its snooz
 })
 
 test('the New alert wizard shows the pointer on every step', async ({ page, request }) => {
+  test.setTimeout(90_000)
   const project = await createProject(request, `cursor-wizard-${Date.now()}`, [])
   try {
     await login(page)

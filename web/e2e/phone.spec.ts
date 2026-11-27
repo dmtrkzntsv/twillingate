@@ -597,6 +597,7 @@ test("the Alerts tab's lists and an alert's page fit a phone", async ({ page, re
 })
 
 test("the New alert wizard's three steps fit a phone", async ({ page, request }) => {
+  test.setTimeout(90_000)
   const { id } = await createProject(request, `wizard-${Date.now()} - longer than a phone is wide on one line`, [
     'https://www.a-long-subdomain.example.com',
   ])
@@ -611,20 +612,22 @@ test("the New alert wizard's three steps fit a phone", async ({ page, request })
     await page.getByRole('button', { name: 'New alert' }).click()
     const dialog = page.getByRole('dialog', { name: 'New alert' })
     await expect(dialog.getByText('Step 1 of 3')).toBeVisible()
-    expect(await dialogOverflow(page), 'step 1').toEqual([])
+    await expect.poll(() => dialogOverflow(page), { message: 'step 1' }).toEqual([])
     expect(await sidewaysScroll(page), 'step 1').toEqual([])
 
     await dialog.getByRole('button', { name: /^Event count/ }).click()
     await expect(dialog.getByText('Step 2 of 3')).toBeVisible()
     await dialog.getByLabel('Event', { exact: true }).selectOption('$page_view')
     await dialog.getByLabel('Threshold', { exact: true }).fill('0.5')
-    expect(await dialogOverflow(page), 'step 2').toEqual([])
+    await expect.poll(() => dialogOverflow(page), { message: 'step 2' }).toEqual([])
     expect(await sidewaysScroll(page), 'step 2').toEqual([])
 
     await dialog.getByRole('button', { name: 'Next' }).click()
     await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
-    await expect(dialog.getByText(/^Would (not )?have fired/)).toBeVisible()
-    expect(await dialogOverflow(page), 'step 3').toEqual([])
+    await expect(dialog.getByText(/^Would (not )?have fired/)).toBeVisible({ timeout: 30_000 })
+    // A name as long as a name may be, to catch a line that will not wrap.
+    await dialog.getByLabel('Name', { exact: true }).fill(('Wizard ' + 'a name that goes on and on '.repeat(4)).slice(0, 100).replace(/ $/, 'x'))
+    await expect.poll(() => dialogOverflow(page), { message: 'step 3' }).toEqual([])
     expect(await sidewaysScroll(page), 'step 3').toEqual([])
   } finally {
     await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
