@@ -1,11 +1,11 @@
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { useAlertActions } from '@/hooks/use-alert-actions'
+import { useAlertActions, type AlertActions } from '@/hooks/use-alert-actions'
 import { templateFieldErrors, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
 import { blankAlert, blankDraft, createBody, nameError as checkName, stepTwoErrors, suggestName, TEMPLATES, wizardAlert } from '@/lib/alert-wizard'
 import { warningsText } from '@/lib/alerts'
@@ -35,13 +35,13 @@ function Backtest({ projectId, blank, draft }: { projectId: number; blank: Alert
  * The wizard's steps, mounted only while the dialog is open, so closing it
  * discards what was entered: 1, a template; 2, its fields and when it
  * fires; 3, the backtest and a name. Back keeps what was entered; choosing
- * another template starts from its blank (a typed name kept).
+ * another template starts from its blank (a typed name kept). `actions` is
+ * the dialog's, which keeps itself open while the create runs.
  */
-function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void }) {
+function Wizard({ projectId, actions, onClose }: { projectId: number; actions: AlertActions; onClose: () => void }) {
   const id = useId()
   const navigate = useNavigate()
   const [url] = useSearchParams()
-  const actions = useAlertActions(projectId)
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [blank, setBlank] = useState<Alert | null>(null)
   const [draft, setDraft] = useState<AlertDraft | null>(null)
@@ -51,6 +51,14 @@ function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void
   const [refusal, setRefusal] = useState('')
   // Set from the first click of Create alert until its answer, so a double click sends one create.
   const creating = useRef(false)
+  // False once this wizard is gone (the dialog closed), so a create answered after that neither closes nor navigates.
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const choose = (template: Template) => {
     if (blank?.template !== template) {
@@ -92,6 +100,7 @@ function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void
       // A taken name and the live-alert limit (409) are said under the name; any other refusal under the step.
       onRefusal: (err) => (err instanceof ApiError && err.status === 409 ? setNameRefusal(err.message) : setRefusal(errorMessage(err))),
     })
+    if (!mounted.current) return
     if (!made) {
       creating.current = false
       return
@@ -208,13 +217,19 @@ interface Props {
  * the project never sent), and opens the alert's page keeping the range. A
  * taken name or the live-alert limit (409) is said under the name, any other
  * refusal under the step, the dialog staying on step 3 with what was
- * entered. Full width on a phone, scrolling within the screen's height.
+ * entered. It does not close while the create runs (no Close, Escape or
+ * click outside), so its answer always lands in the wizard that sent it. Full
+ * width on a phone, scrolling within the screen's height.
  */
 export default function NewAlertDialog({ open, onOpenChange, projectId }: Props) {
+  const actions = useAlertActions(projectId)
+  const hold = (e: Event) => {
+    if (actions.pending) e.preventDefault()
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
-        <Wizard projectId={projectId} onClose={() => onOpenChange(false)} />
+    <Dialog open={open} onOpenChange={(next) => (next || !actions.pending) && onOpenChange(next)}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl" showCloseButton={!actions.pending} onEscapeKeyDown={hold} onInteractOutside={hold}>
+        <Wizard projectId={projectId} actions={actions} onClose={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   )

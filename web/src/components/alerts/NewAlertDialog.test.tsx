@@ -142,6 +142,25 @@ describe('NewAlertDialog', () => {
     expect(client.getQueryData<AlertsResponse>(alertsQuery(1, false).queryKey)?.alerts).toEqual([MADE])
   })
 
+  it('stays open while the create runs, then closes on its answer', async () => {
+    let answer!: (a: Alert) => void
+    vi.spyOn(endpoints, 'createAlert').mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    const user = userEvent.setup()
+    renderList()
+    const d = await toStepThree(user)
+    expect(d.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    await user.click(d.getByRole('button', { name: 'Create alert' }))
+    expect(d.queryByRole('button', { name: 'Close' })).toBeNull()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'New alert' })).toBeInTheDocument()
+    expect(d.getByText('Step 3 of 3')).toBeInTheDocument()
+
+    live = [MADE]
+    answer(MADE)
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/projects/1/alerts/42?range=7d'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('backtests the new definition after Back, a change and Next, reusing an unchanged one', async () => {
     const user = userEvent.setup()
     renderList()
