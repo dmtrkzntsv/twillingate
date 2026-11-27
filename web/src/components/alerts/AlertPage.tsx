@@ -143,6 +143,9 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
   // refetch that brings another edit shows it rather than a save sending the
   // old value back.
   const [edits, setEdits] = useState<{ id: number; touched: DraftEdits } | null>(null)
+  // An archive drops what was typed: the editor is gone, and a restore brings it back as saved.
+  const archivedAt = alert?.archived_at
+  useEffect(() => setEdits(null), [archivedAt])
 
   if (!alert) {
     // A list that failed may lack the alert only for being old (a cached one whose reading afresh failed): no telling it is gone.

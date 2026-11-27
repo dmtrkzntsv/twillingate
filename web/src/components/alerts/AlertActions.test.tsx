@@ -316,6 +316,31 @@ describe('AlertActions', () => {
     expect(await screen.findByRole('button', { name: 'Check now' })).toBeInTheDocument()
   })
 
+  it('drops unsaved edits when the alert is archived, so Restore shows it as saved', async () => {
+    const live = alert({ id: 7 })
+    const archived = alert({ id: 7, archived_at: '2026-11-26T10:00:00Z' })
+    const { lists } = serveAlerts([live])
+    vi.spyOn(endpoints, 'archiveAlert').mockImplementation(async () => {
+      lists.live = []
+      lists.archived = [archived]
+      return archived
+    })
+    vi.spyOn(endpoints, 'restoreAlert').mockImplementation(async () => {
+      lists.live = [live]
+      lists.archived = []
+      return live
+    })
+    const user = userEvent.setup()
+    renderPage()
+    const name = await screen.findByLabelText('Name')
+    await user.type(name, ' edited')
+    expect(screen.getByLabelText('Name')).toHaveValue('Signups edited')
+    await user.click(screen.getByRole('button', { name: 'Archive' }))
+    await user.click(await screen.findByRole('button', { name: 'Restore' }))
+    expect(await screen.findByLabelText('Name')).toHaveValue('Signups')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
   it("toasts the server's refusal and reads the list again", async () => {
     const { spy } = serveAlerts([alert({ id: 7 })])
     vi.spyOn(endpoints, 'updateAlert').mockRejectedValue(new ApiError(409, 'the alert changed meanwhile', 'conflict'))
