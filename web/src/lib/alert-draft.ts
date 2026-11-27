@@ -84,6 +84,23 @@ export function draftOf(a: Alert): AlertDraft {
   }
 }
 
+/** The inputs the editor changed, over a saved alert: each one typed in whole, and a template's fields one by one (only the keys touched). */
+export type DraftEdits = Partial<Omit<AlertDraft, 'fields'>> & { fields?: Record<string, string> }
+
+/** The draft of the saved alert with `edits` over it: a template field touched holds what was typed (an emptied one included), every other the saved alert's value, so a refetch bringing another edit of an untouched field shows it and a save sends it back unchanged. */
+export function draftWith(a: Alert, edits: DraftEdits | null): AlertDraft {
+  const d = draftOf(a)
+  if (!edits) return d
+  return { ...d, ...edits, fields: { ...d.fields, ...edits.fields } }
+}
+
+/** `edits` with `more` over them: an input touched again holds its new value, and a template's fields merge key by key. */
+export function addEdits(edits: DraftEdits, more: DraftEdits): DraftEdits {
+  const next = { ...edits, ...more }
+  if (edits.fields || more.fields) next.fields = { ...edits.fields, ...more.fields }
+  return next
+}
+
 /** The condition the draft means, in the alert's unit. Only meaningful once `draftErrors` has none for it. */
 function conditionOf(a: Alert, d: AlertDraft): AlertCondition {
   switch (d.conditionType) {

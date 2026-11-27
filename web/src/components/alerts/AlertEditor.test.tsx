@@ -294,6 +294,24 @@ describe('TemplateFields', () => {
     expect(update).toHaveBeenCalledWith(1, 7, { fields: { from_event: 'paid', from_path: '/contact', to_event: 'signup', to_path: '/welcome' } })
   })
 
+  it("sends a field another client changed meanwhile as it now is, beside the one edited here", async () => {
+    const a = alert({ id: 7, kind: 'funnel', unit: 'fraction', template: 'conversion', fields: { from_event: '$page_view', to_event: 'signup' } })
+    const { lists } = serveAlerts([a])
+    const update = vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(a)
+    const user = userEvent.setup()
+    const { client } = renderPage()
+    const f = await form()
+    await vi.waitFor(() => expect(within(f.getByLabelText('To event')).getByRole('option', { name: 'paid' })).toBeInTheDocument())
+    await user.selectOptions(f.getByLabelText('To event'), 'paid')
+    // Another client changed the first step, and the list is read again.
+    lists.live = [{ ...a, fields: { from_event: 'signup', to_event: 'signup' } }]
+    await client.invalidateQueries({ queryKey: ['alerts', 1] })
+    await vi.waitFor(() => expect(f.getByLabelText('From event')).toHaveValue('signup'))
+    expect(f.getByLabelText('To event')).toHaveValue('paid')
+    await user.click(f.getByRole('button', { name: 'Save' }))
+    expect(update).toHaveBeenCalledWith(1, 7, { fields: { from_event: 'signup', to_event: 'paid' } })
+  })
+
   it('keeps Save disabled when the people chosen are the default the alert already counts', async () => {
     serveAlerts([alert({ id: 7, template: 'unique_people', fields: { event: 'signup' } })])
     const user = userEvent.setup()

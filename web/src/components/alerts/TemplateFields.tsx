@@ -42,7 +42,8 @@ interface Props {
   projectId: number
   template: Template
   fields: Record<string, string>
-  onChange: (fields: Record<string, string>) => void
+  /** The fields changed, by key; the others are left out, so the page keeps following the saved alert's. */
+  onChange: (changed: Record<string, string>) => void
   /** Shown under the fields. */
   error?: string
 }
@@ -63,7 +64,6 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
   const tz = useQuery(dashboardsQuery).data?.timezone ?? 'UTC'
   const names = useQuery(eventNamesQuery(projectId, resolve('30d', tz)))
   const listed = [...new Set((names.data?.events ?? []).map((e) => e.name))].filter((n) => n !== PAGE_VIEW)
-  const set = (patch: Record<string, string>) => onChange({ ...fields, ...patch })
   const people = PEOPLE_FIELDS[template]
 
   return (
@@ -83,7 +83,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
                 value={value}
                 onChange={(e) => {
                   const next = e.target.value
-                  set(f.path?.viewsOnly && next !== PAGE_VIEW ? { [f.key]: next, [f.path.key]: '' } : { [f.key]: next })
+                  onChange(f.path?.viewsOnly && next !== PAGE_VIEW ? { [f.key]: next, [f.path.key]: '' } : { [f.key]: next })
                 }}
               >
                 {(f.every !== undefined || value === '') && <NativeSelectOption value="">{f.every ?? 'Choose an event'}</NativeSelectOption>}
@@ -101,7 +101,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
                   id={`${id}-${f.path.key}`}
                   value={fields[f.path.key] ?? ''}
                   placeholder="Every page"
-                  onChange={(e) => set({ [f.path!.key]: e.target.value })}
+                  onChange={(e) => onChange({ [f.path!.key]: e.target.value })}
                 />
               </div>
             )}
@@ -111,7 +111,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
       {people && (
         <div className="flex min-w-0 flex-col gap-1.5">
           <Label htmlFor={`${id}-${people.key}`}>{people.label}</Label>
-          <NativeSelect id={`${id}-${people.key}`} value={fields[people.key] || (TEMPLATE_DEFAULTS[template]?.[people.key] ?? '')} onChange={(e) => set({ [people.key]: e.target.value })}>
+          <NativeSelect id={`${id}-${people.key}`} value={fields[people.key] || (TEMPLATE_DEFAULTS[template]?.[people.key] ?? '')} onChange={(e) => onChange({ [people.key]: e.target.value })}>
             {people.choices.map(([v, label]) => (
               <NativeSelectOption key={v} value={v}>
                 {label}

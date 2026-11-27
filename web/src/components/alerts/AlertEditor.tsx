@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AlertActions } from '@/hooks/use-alert-actions'
-import { definitionChanged, draftErrors, draftOf, patchOf, type AlertDraft } from '@/lib/alert-draft'
+import { definitionChanged, draftErrors, draftOf, patchOf, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
 import { ApiError, type Alert } from '@/lib/api'
 import { alertPreviewsKey } from '@/lib/queries'
 import { toastError } from '@/lib/toast-error'
@@ -24,8 +24,8 @@ interface Props {
   actions: AlertActions
   /** What the inputs hold: the saved alert with the inputs touched over it. The page keeps it, since the backtest previews it too. */
   draft: AlertDraft
-  /** Inputs as typed. */
-  onEdit: (patch: Partial<AlertDraft>) => void
+  /** Inputs as typed; a template's fields only the keys changed. */
+  onEdit: (patch: DraftEdits) => void
   /** Follows the saved alert again (after Discard or a save). */
   onReset: () => void
 }

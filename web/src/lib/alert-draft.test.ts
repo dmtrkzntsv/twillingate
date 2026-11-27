@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { alert, brokenAlert } from '@/test/alerts'
-import { definitionChanged, draftErrors, draftOf, patchOf, previewBody } from './alert-draft'
+import { addEdits, definitionChanged, draftErrors, draftOf, draftWith, patchOf, previewBody } from './alert-draft'
 
 const rate = () =>
   alert({ unit: 'fraction', read: { metric: 'rate', volume: 'count' }, condition: { type: 'threshold', op: 'below', value: 0.03 }, window_days: 7, min_volume: 100 })
@@ -23,6 +23,31 @@ describe('draftOf', () => {
   it('gives the condition types the alert lacks their defaults', () => {
     const d = draftOf(rate())
     expect(d).toMatchObject({ direction: 'drop', percent: '30', against: 'previous' })
+  })
+})
+
+describe('draftWith', () => {
+  it('is the saved draft with no edits', () => {
+    expect(draftWith(template(), null)).toEqual(draftOf(template()))
+  })
+
+  it("lays the template fields touched over the latest alert's, so a save sends another client's change to an untouched one", () => {
+    const before = alert({ template: 'conversion', kind: 'funnel', unit: 'fraction', fields: { from_event: 'visit', to_event: 'signup' } })
+    const edits = addEdits({ fields: { to_event: 'paid' } }, { name: 'Paid conversion' })
+    // Another client changed from_event meanwhile, and the list was read again.
+    const after = { ...before, fields: { from_event: 'landing', to_event: 'signup' } }
+    const d = draftWith(after, edits)
+    expect(d.fields).toEqual({ from_event: 'landing', to_event: 'paid' })
+    expect(d.name).toBe('Paid conversion')
+    expect(patchOf(after, d)).toEqual({ name: 'Paid conversion', fields: { from_event: 'landing', to_event: 'paid' } })
+  })
+
+  it('merges the fields of two edits key by key, keeping a field emptied', () => {
+    const a = alert({ template: 'event_count', fields: { event: '$page_view', path: '/pricing' } })
+    const edits = addEdits({ fields: { event: 'paid', path: '' } }, { fields: { event: 'signup' } })
+    expect(edits.fields).toEqual({ event: 'signup', path: '' })
+    expect(draftWith(a, edits).fields).toEqual({ event: 'signup', path: '' })
+    expect(patchOf(a, draftWith(a, edits))).toEqual({ fields: { event: 'signup' } })
   })
 })
 

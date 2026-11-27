@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAlertActions } from '@/hooks/use-alert-actions'
 import { useNow } from '@/hooks/use-now'
-import { draftOf, type AlertDraft } from '@/lib/alert-draft'
+import { addEdits, draftWith, type DraftEdits } from '@/lib/alert-draft'
 import { describeCondition, stateLabel } from '@/lib/alerts'
 import type { Alert, Project } from '@/lib/api'
 import { ALERTS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
@@ -111,10 +111,11 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
   const archived = useQuery({ ...alertsQuery(projectId, true), enabled: lookArchived, refetchInterval: pollWhilePending(id) })
   const alert = inLive ?? (lookArchived ? archived.data?.alerts.find((a) => a.id === id) : undefined)
   useCheckedToast(alert, actions.asked, actions.forget)
-  // The inputs the editor touched, on the alert they were touched on; the
-  // rest follow the saved alert, so a refetch that brings another edit
-  // shows it rather than a save sending the old value back.
-  const [edits, setEdits] = useState<{ id: number; touched: Partial<AlertDraft> } | null>(null)
+  // The inputs the editor touched (a template's fields key by key), on the
+  // alert they were touched on; the rest follow the saved alert, so a
+  // refetch that brings another edit shows it rather than a save sending the
+  // old value back.
+  const [edits, setEdits] = useState<{ id: number; touched: DraftEdits } | null>(null)
 
   if (!alert) {
     if (valid && live.error && !live.data) return <LoadError what="the alert" error={live.error} onRetry={() => void live.refetch()} />
@@ -137,7 +138,7 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
     )
   }
 
-  const draft = { ...draftOf(alert), ...(edits?.id === alert.id ? edits.touched : {}) }
+  const draft = draftWith(alert, edits?.id === alert.id ? edits.touched : null)
   const isArchived = alert.archived_at !== ''
   const showReason = (alert.state === 'broken' || alert.state === 'no_data') && alert.reason
   return (
@@ -167,7 +168,7 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
           alert={alert}
           actions={actions}
           draft={draft}
-          onEdit={(patch) => setEdits((e) => ({ id: alert.id, touched: { ...(e?.id === alert.id ? e.touched : {}), ...patch } }))}
+          onEdit={(patch) => setEdits((e) => ({ id: alert.id, touched: addEdits(e?.id === alert.id ? e.touched : {}, patch) }))}
           onReset={() => setEdits(null)}
         />
       )}
