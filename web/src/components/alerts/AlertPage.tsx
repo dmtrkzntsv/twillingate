@@ -94,8 +94,9 @@ function useCheckedToast(alert: Alert | undefined, asked: (id: number) => boolea
  * page: its name and state (and why, when broken or without data), a line
  * of facts, the actions, and what it watches. No route reads a single
  * alert, so it is found in the live list, else in the archived one; in
- * neither (purged after archiving, or a wrong link) the page says so.
- * While a check is pending the lists are read every 2 s.
+ * neither (purged after archiving, or a wrong link) the page says so,
+ * unless a list failed to load, which it says instead, with Retry. While a
+ * check is pending the lists are read every 2 s.
  */
 export default function AlertPage({ project, alertId }: { project: Project; alertId: string }) {
   const projectId = project.project_id
@@ -118,9 +119,9 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
   const [edits, setEdits] = useState<{ id: number; touched: DraftEdits } | null>(null)
 
   if (!alert) {
-    if (valid && live.error && !live.data) return <LoadError what="the alert" error={live.error} onRetry={() => void live.refetch()} />
-    if (lookArchived && archived.error && !archived.data)
-      return <LoadError what="the alert" error={archived.error} onRetry={() => void archived.refetch()} />
+    // A list that failed may lack the alert only for being old (a cached one whose reading afresh failed): no telling it is gone.
+    if (valid && live.error) return <LoadError what="the alert" error={live.error} onRetry={() => void live.refetch()} />
+    if (lookArchived && archived.error) return <LoadError what="the alert" error={archived.error} onRetry={() => void archived.refetch()} />
     // Either list still on its way (a cached one being read afresh included) may yet hold it.
     if (valid && (!live.data || !archived.data || live.isFetching || archived.isFetching)) return <Skeleton aria-hidden className="h-24 w-full max-w-4xl" />
     return (

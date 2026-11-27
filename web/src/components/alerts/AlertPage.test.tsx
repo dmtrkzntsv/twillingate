@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError, endpoints, type Project } from '@/lib/api'
 import { alert, brokenAlert, serveAlerts } from '@/test/alerts'
-import { renderWithProviders } from '@/test/render'
+import { alertsQuery } from '@/lib/queries'
+import { renderWithProviders, testClient } from '@/test/render'
 import AlertPage from './AlertPage'
 
 vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }))
@@ -142,6 +143,22 @@ describe('AlertPage', () => {
     renderPage('7')
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the alert. boom")
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('says why the alerts did not load, with Retry, when the lists it had lack the alert and reading them afresh failed', async () => {
+    const client = testClient()
+    client.setQueryData(alertsQuery(1, false).queryKey, { max_live: 50, alerts: [alert({ id: 3 })] })
+    client.setQueryData(alertsQuery(1, true).queryKey, { max_live: 50, alerts: [] })
+    vi.spyOn(endpoints, 'alerts').mockRejectedValue(new ApiError(500, 'boom', 'internal'))
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/1/alerts/7']}>
+        <AlertPage project={project} alertId="7" />
+      </MemoryRouter>,
+      client
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the alert. boom")
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'No alert at this address' })).toBeNull()
   })
 
   it('polls every 2 s while a check it did not ask for is pending, then stops, without a toast', async () => {
