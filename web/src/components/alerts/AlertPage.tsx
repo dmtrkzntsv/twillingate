@@ -30,9 +30,15 @@ function firstDay(lastDay: string, days: number): string {
   return new Date(Date.parse(`${lastDay}T00:00:00Z`) - (days - 1) * DAY_MS).toISOString().slice(0, 10)
 }
 
+/** The last value as the facts line opens: a silence alert's own text (`last event 7h ago`) capitalised, any other's (or a silence alert's none) after `Last value`. */
+function lastValue(a: Alert): string {
+  if (a.kind === 'silence' && a.last_value !== null) return a.last_value_text.charAt(0).toUpperCase() + a.last_value_text.slice(1)
+  return `Last value ${a.last_value_text}`
+}
+
 /** The muted line under the heading: the last value, when it was checked, the days it read, and when it was archived. */
 function facts(a: Alert, now: number): string {
-  const parts = [`Last value ${a.last_value_text}`]
+  const parts = [lastValue(a)]
   if (a.last_evaluated_at) parts.push(`checked ${formatAgo(a.last_evaluated_at, new Date(now))}`)
   // A silence alert reads hours, not days; a broken one has no window.
   if (a.kind !== 'silence' && a.last_day && a.window_days >= 1) parts.push(`days ${firstDay(a.last_day, a.window_days)} to ${a.last_day}`)

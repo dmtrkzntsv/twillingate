@@ -19,9 +19,10 @@ function local(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-/** How often the backtest says the alert would have fired, over the days it reads: a stat's 90, a funnel's and a silence alert's 30. */
-function firedText(alert: Alert, fired: number): string {
-  const span = alert.kind === 'stat' ? 90 : 30
+/** How often the backtest says the alert would have fired, over the days it read: a metric alert's days as the answer has them (a stat's 90, a funnel's 30), a silence alert's 30. */
+function firedText(alert: Alert, preview: AlertPreview): string {
+  const span = alert.kind === 'silence' ? 30 : preview.days.length
+  const fired = preview.fired
   if (fired === 0) return `Would not have fired in the last ${span} days`
   return `Would have fired ${fired} ${fired === 1 ? 'time' : 'times'} in the last ${span} days`
 }
@@ -30,7 +31,7 @@ function firedText(alert: Alert, fired: number): string {
 function Result({ alert, preview }: { alert: Alert; preview: AlertPreview }) {
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <p className="text-sm">{firedText(alert, preview.fired)}</p>
+      <p className="text-sm">{firedText(alert, preview)}</p>
       {alert.kind === 'silence' ? (
         preview.gaps.length > 0 && (
           <ul className="flex flex-col gap-1 text-sm break-words text-muted-foreground">
@@ -70,7 +71,8 @@ interface Props {
 
 /**
  * **Backtest**: how the saved alert would have fired over the past
- * (`preview_alert` with its id), read when the page opens; not for an
+ * (`preview_alert` with its id), read when the page opens and again once
+ * the alert's `updated_at` moves (an edit here, elsewhere or by an agent); not for an
  * archived or a broken alert, which the page does not show it for. While
  * the draft changes the definition, **Preview changes** runs the draft
  * (once it has no errors) and shows that answer, **With your changes**,
@@ -80,7 +82,7 @@ interface Props {
 export default function AlertBacktest({ projectId, alert, draft }: Props) {
   const id = useId()
   const runnable = alert.archived_at === '' && alert.kind !== ''
-  const saved = useQuery({ ...alertPreviewQuery(projectId, alert.id), enabled: runnable })
+  const saved = useQuery({ ...alertPreviewQuery(projectId, alert.id, alert.updated_at), enabled: runnable })
   const changed = runnable && draft !== null && definitionChanged(alert, draft)
   const body = changed ? previewBody(alert, draft) : null
   const bodyKey = body ? JSON.stringify(body) : null

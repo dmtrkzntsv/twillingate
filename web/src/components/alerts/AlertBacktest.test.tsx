@@ -16,15 +16,19 @@ beforeEach(() => {
 
 /** 90 days ending 2026-11-25, ok but for two runs of breached days and one with no data. */
 function ninetyDays(): AlertPreview {
-  const start = Date.parse('2026-08-28T00:00:00Z')
-  const days = Array.from({ length: 90 }, (_, i) => ({
+  return { days: okDays(90), gaps: [], fired: 2 }
+}
+
+/** `n` days ending 2026-11-25, ok but for breached days 10, 11 and 50 and a day 20 with no data. */
+function okDays(n: number): AlertPreview['days'] {
+  const start = Date.parse('2026-11-25T00:00:00Z') - (n - 1) * DAY
+  return Array.from({ length: n }, (_, i) => ({
     day: new Date(start + i * DAY).toISOString().slice(0, 10),
     value: 100 + i,
     compare: null,
     volume: null,
     outcome: [10, 11, 50].includes(i) ? ('breached' as const) : i === 20 ? ('no_data' as const) : ('ok' as const),
   }))
-  return { days, gaps: [], fired: 2 }
 }
 
 const strip = () => screen.getAllByTestId('backtest-strip')
@@ -45,9 +49,29 @@ describe('AlertBacktest', () => {
   })
 
   it('says a funnel would not have fired in its 30 days', async () => {
-    vi.spyOn(endpoints, 'previewAlert').mockResolvedValue({ days: [], gaps: [], fired: 0 })
+    vi.spyOn(endpoints, 'previewAlert').mockResolvedValue({ days: okDays(30).map((d) => ({ ...d, outcome: 'ok' })), gaps: [], fired: 0 })
     renderWithProviders(<AlertBacktest projectId={1} alert={alert({ id: 7, kind: 'funnel', unit: 'fraction' })} draft={null} />)
     expect(await screen.findByText('Would not have fired in the last 30 days')).toBeInTheDocument()
+  })
+
+  it('counts the days the answer has, whatever the kind', async () => {
+    vi.spyOn(endpoints, 'previewAlert').mockResolvedValue({ days: okDays(60), gaps: [], fired: 1 })
+    renderWithProviders(<AlertBacktest projectId={1} alert={alert({ id: 7 })} draft={null} />)
+    expect(await screen.findByText('Would have fired 1 time in the last 60 days')).toBeInTheDocument()
+  })
+
+  it('runs the saved backtest again once the alert was edited elsewhere (a new updated_at)', async () => {
+    const preview = vi.spyOn(endpoints, 'previewAlert').mockResolvedValueOnce(ninetyDays()).mockResolvedValue({ ...ninetyDays(), fired: 4 })
+    const a = alert({ id: 7 })
+    const { client, rerender } = renderWithProviders(<AlertBacktest projectId={1} alert={a} draft={null} />)
+    await screen.findByText('Would have fired 2 times in the last 90 days')
+    rerender(
+      <QueryClientProvider client={client}>
+        <AlertBacktest projectId={1} alert={{ ...a, updated_at: '2026-11-26T09:00:00Z' }} draft={null} />
+      </QueryClientProvider>
+    )
+    expect(await screen.findByText('Would have fired 4 times in the last 90 days')).toBeInTheDocument()
+    expect(preview).toHaveBeenCalledTimes(2)
   })
 
   it("lists a silence alert's gaps in local time", async () => {

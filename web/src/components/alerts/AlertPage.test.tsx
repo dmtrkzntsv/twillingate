@@ -117,13 +117,14 @@ describe('AlertPage', () => {
   it("shows a silence alert's filters as its query, and no days", async () => {
     const where = [{ field: 'event', op: 'eq', value: 'signup' }]
     serveAlerts([
-      alert({ id: 7, kind: 'silence', unit: 'hours', where, condition: { type: 'silence', hours: 6 }, last_day: '', last_value_text: '2h' }),
+      alert({ id: 7, kind: 'silence', unit: 'hours', where, condition: { type: 'silence', hours: 6 }, last_day: '', last_value: 2, last_value_text: 'last event 2h ago' }),
     ])
     renderPage('7')
     const watches = await screen.findByRole('region', { name: 'Watches' })
     expect(within(watches).getByText('Events matching 1 filter')).toBeInTheDocument()
     expect(watches.querySelector('pre')?.textContent).toBe(JSON.stringify(where, null, 2))
-    expect(facts()).toHaveTextContent('Last value 2h')
+    expect(facts()).toHaveTextContent(/^Last event 2h ago/)
+    expect(facts()).not.toHaveTextContent('Last value')
     expect(facts()).not.toHaveTextContent('days')
   })
 

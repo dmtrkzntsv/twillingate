@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import type { AlertActions } from '@/hooks/use-alert-actions'
 import { definitionChanged, draftErrors, draftOf, patchOf, type AlertDraft } from '@/lib/alert-draft'
 import { ApiError, type Alert } from '@/lib/api'
-import { alertPreviewQuery } from '@/lib/queries'
+import { alertPreviewsKey } from '@/lib/queries'
 import { toastError } from '@/lib/toast-error'
 import ConditionFields, { errorProps, Field } from './ConditionFields'
 import TemplateFields from './TemplateFields'
@@ -67,8 +67,8 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
     toast.success('Saved')
     setWarnings(saved.warnings ?? [])
     onReset()
-    // The saved backtest is of the old definition.
-    if (definition) void client.invalidateQueries({ queryKey: alertPreviewQuery(projectId, alert.id).queryKey })
+    // The saved backtest is of the old definition (the new updated_at reads it afresh too).
+    if (definition) void client.invalidateQueries({ queryKey: alertPreviewsKey(projectId, alert.id) })
   }
 
   const discard = () => {
