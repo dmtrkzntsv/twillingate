@@ -70,8 +70,10 @@ function pollWhilePending(id: number) {
 
 /**
  * Toasts `Checked: <state>` when the alert's pending check clears, if this
- * page asked for it (`actions.asked`); a check asked for elsewhere, or one
- * pending when the page opened, clears quietly.
+ * page asked for it (`actions.asked`) and it was served (`last_evaluated_at`
+ * set again); a check asked for elsewhere, one pending when the page
+ * opened, or one dropped unrun (a pause, a snooze or an archive from
+ * another client, which leave the alert never evaluated) clears quietly.
  */
 function useCheckedToast(alert: Alert | undefined, asked: (id: number) => boolean, forget: (id: number) => void) {
   const wasPending = useRef(false)
@@ -85,7 +87,7 @@ function useCheckedToast(alert: Alert | undefined, asked: (id: number) => boolea
     wasPending.current = false
     if (!asked(alert.id)) return
     forget(alert.id)
-    toast(`Checked: ${stateLabel(alert.state)}`)
+    if (alert.last_evaluated_at) toast(`Checked: ${stateLabel(alert.state)}`)
   }, [alert, asked, forget])
 }
 

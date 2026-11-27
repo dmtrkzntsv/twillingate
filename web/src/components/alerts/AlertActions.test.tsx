@@ -119,6 +119,38 @@ describe('AlertActions', () => {
     }
   })
 
+  it('says nothing of a check another client cancelled, and nothing of a check asked for elsewhere after it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const { lists } = serveAlerts([alert({ id: 7 })])
+      vi.spyOn(endpoints, 'checkAlert').mockImplementation(async () => {
+        // The server clears last_evaluated_at until the check is served.
+        const pending = alert({ id: 7, check_pending: true, check_requested_at: '2026-11-26T10:00:00Z', last_evaluated_at: '' })
+        lists.live = [pending]
+        return pending
+      })
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTimeAsync })
+      const { client } = renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Check now' }))
+      await screen.findByRole('button', { name: 'Checking…' })
+      // Paused elsewhere: the request is dropped unrun and the alert reset, never evaluated.
+      lists.live = [alert({ id: 7, paused: true, state: 'paused', last_evaluated_at: '' })]
+      await vi.advanceTimersByTimeAsync(2_100)
+      expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument()
+      expect(toast).not.toHaveBeenCalled()
+      // Resumed elsewhere, which asks for a check, then served: not this page's to report.
+      lists.live = [alert({ id: 7, check_pending: true, last_evaluated_at: '' })]
+      await client.invalidateQueries({ queryKey: ['alerts', 1] })
+      await screen.findByRole('button', { name: 'Checking…' })
+      lists.live = [alert({ id: 7, state: 'breached', last_evaluated_at: '2026-11-26T10:01:00Z' })]
+      await vi.advanceTimersByTimeAsync(2_100)
+      expect(await screen.findByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled')
+      expect(toast).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('says nothing of a check that a pause cancelled', async () => {
     const { lists } = serveAlerts([alert({ id: 7 })])
     vi.spyOn(endpoints, 'checkAlert').mockImplementation(async () => {
