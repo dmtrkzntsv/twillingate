@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import NotFound from '@/components/NotFound'
@@ -24,6 +24,10 @@ import AlertStateBadge from './AlertStateBadge'
 /** How often the alert lists are read while the alert's check is pending: the runner serves one within a minute. */
 const CHECK_POLL_MS = 2_000
 const DAY_MS = 86_400_000
+/** The longest delay setTimeout takes (a 32-bit count of milliseconds); a longer wait is made in steps. */
+const MAX_TIMEOUT_MS = 2_147_483_647
+/** How long after a snooze ends the lists are read, so the server's clock is past it. */
+const SNOOZE_END_GRACE_MS = 1_000
 
 /** The first day of a window of `days` days that ends on `lastDay` (YYYY-MM-DD, UTC). */
 function firstDay(lastDay: string, days: number): string {
@@ -146,6 +150,21 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
   // An archive drops what was typed: the editor is gone, and a restore brings it back as saved.
   const archivedAt = alert?.archived_at
   useEffect(() => setEdits(null), [archivedAt])
+  // A snoozed alert left open reads the live list again when the snooze ends, so its badge and Check now follow the server.
+  const client = useQueryClient()
+  const snoozedUntil = alert && alert.archived_at === '' ? alert.snoozed_until : ''
+  useEffect(() => {
+    const end = snoozedUntil ? Date.parse(snoozedUntil) + SNOOZE_END_GRACE_MS : NaN
+    if (!(end > Date.now())) return
+    let timer: ReturnType<typeof setTimeout>
+    const arm = () => {
+      const left = end - Date.now()
+      if (left <= 0) void client.invalidateQueries({ queryKey: alertsQuery(projectId, false).queryKey })
+      else timer = setTimeout(arm, Math.min(left, MAX_TIMEOUT_MS))
+    }
+    arm()
+    return () => clearTimeout(timer)
+  }, [snoozedUntil, projectId, client])
 
   if (!alert) {
     // A list that failed may lack the alert only for being old (a cached one whose reading afresh failed): no telling it is gone.

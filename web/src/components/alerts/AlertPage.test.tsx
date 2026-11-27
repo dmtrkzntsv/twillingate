@@ -194,4 +194,41 @@ describe('AlertPage', () => {
       vi.useRealTimers()
     }
   })
+
+  it('reads the list again when a snooze left open ends, and shows the server state then', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const until = new Date(Date.now() + 60_000).toISOString()
+      const { lists, spy } = serveAlerts([alert({ id: 7, state: 'snoozed', snoozed_until: until })])
+      renderPage('7')
+      const button = await screen.findByRole('button', { name: 'Check now' })
+      expect(button).toHaveAttribute('aria-disabled', 'true')
+      const before = spy.mock.calls.length
+      lists.live = [alert({ id: 7, state: 'ok', snoozed_until: '' })]
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(spy.mock.calls.length).toBe(before)
+      await vi.advanceTimersByTimeAsync(32_000)
+      expect(spy.mock.calls.length).toBe(before + 1)
+      expect(await screen.findByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled')
+      expect(screen.queryByText(/Snoozed until/)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits out a snooze longer than setTimeout can count in steps, never asking it for more than it takes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const timeout = vi.spyOn(globalThis, 'setTimeout')
+      const until = new Date(Date.now() + 30 * 86_400_000).toISOString()
+      serveAlerts([alert({ id: 7, state: 'snoozed', snoozed_until: until })])
+      renderPage('7')
+      await screen.findByRole('button', { name: 'Check now' })
+      const delays = timeout.mock.calls.map((c) => Number(c[1] ?? 0))
+      expect(delays).toContain(2_147_483_647)
+      expect(Math.max(...delays)).toBe(2_147_483_647)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
