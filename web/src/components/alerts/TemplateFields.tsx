@@ -59,7 +59,8 @@ interface Props {
  * always, kept across a change of event; and the people a template counts,
  * its default shown when the field is absent. An empty field is an absent
  * one. When the event names fail to load, it says so, with Retry, above
- * pickers that still offer `$page_view` and the fields' own values.
+ * pickers that still offer `$page_view` and the fields' own values. Each
+ * control's `name` is its field's key.
  */
 export default function TemplateFields({ projectId, template, fields, onChange, errors }: Props) {
   const id = useId()
@@ -81,6 +82,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
             <Field id={`${id}-${f.key}`} label={f.label} error={errors?.[f.key]}>
               <NativeSelect
                 id={`${id}-${f.key}`}
+                name={f.key}
                 {...errorProps(`${id}-${f.key}`, errors?.[f.key])}
                 className="max-w-full"
                 value={value}
@@ -89,7 +91,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
                   onChange(f.path?.viewsOnly && next !== PAGE_VIEW ? { [f.key]: next, [f.path.key]: '' } : { [f.key]: next })
                 }}
               >
-                {(f.every !== undefined || value === '') && <NativeSelectOption value="">{f.every ?? 'Choose an event'}</NativeSelectOption>}
+                {(f.every !== undefined || value === '') && <NativeSelectOption value="">{f.every ?? 'Pick an event'}</NativeSelectOption>}
                 {choices.map((c) => (
                   <NativeSelectOption key={c} value={c}>
                     {c}
@@ -101,6 +103,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
               <Field id={`${id}-${f.path.key}`} label={f.path.label}>
                 <Input
                   id={`${id}-${f.path.key}`}
+                  name={f.path.key}
                   value={fields[f.path.key] ?? ''}
                   placeholder="Every page"
                   onChange={(e) => onChange({ [f.path!.key]: e.target.value })}

@@ -17,14 +17,15 @@ describe('TemplateFields errors', () => {
     show({ fields: { from_event: 'visit' }, errors: { to_event: 'Pick an event' } })
     const to = screen.getByLabelText('To event')
     expect(to).toHaveAttribute('aria-invalid', 'true')
-    const msg = screen.getByText('Pick an event')
+    const msg = screen.getByText('Pick an event', { selector: 'p' })
     expect(to.getAttribute('aria-describedby')).toBe(msg.id)
     expect(to.closest('div.flex-col')).toContainElement(msg)
     expect(screen.getByLabelText('From event')).not.toHaveAttribute('aria-invalid')
   })
 
-  it('shows nothing without errors', () => {
+  it('shows nothing without errors, its empty choices saying what to do in the error\'s words', () => {
     show({})
-    expect(screen.queryByText('Pick an event')).toBeNull()
+    expect(screen.queryByText('Pick an event', { selector: 'p' })).toBeNull()
+    expect(screen.getAllByRole('option', { name: 'Pick an event' })).toHaveLength(2)
   })
 })

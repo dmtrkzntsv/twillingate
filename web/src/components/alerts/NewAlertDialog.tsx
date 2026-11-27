@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FocusEvent, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
@@ -49,6 +49,8 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
   const [suggested, setSuggested] = useState('')
   const [nameRefusal, setNameRefusal] = useState('')
   const [refusal, setRefusal] = useState('')
+  // Step 2's inputs the user changed or left, by draft key or template field key (each input's `name`): only their errors show, so a template opens with none.
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set())
   // Set from the first click of Create alert until its answer, so a double click sends one create.
   const creating = useRef(false)
   // False once this wizard is gone (the dialog closed), so a create answered after that neither closes nor navigates.
@@ -66,11 +68,21 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
       setBlank(b)
       setDraft((d) => ({ ...blankDraft(b), name: d && d.name !== suggested ? d.name : '' }))
       setSuggested('')
+      setTouched(new Set())
     }
     setStep(2)
   }
 
-  const edit = (patch: DraftEdits) => setDraft((d) => d && { ...d, ...patch, fields: { ...d.fields, ...patch.fields } })
+  const touch = (keys: string[]) => setTouched((t) => (keys.every((k) => t.has(k)) ? t : new Set([...t, ...keys])))
+
+  const edit = (patch: DraftEdits) => {
+    touch([...Object.keys(patch).filter((k) => k !== 'fields'), ...Object.keys(patch.fields ?? {})])
+    setDraft((d) => d && { ...d, ...patch, fields: { ...d.fields, ...patch.fields } })
+  }
+
+  /** The errors of the inputs the user has touched. Next stays off while there are any, and a form whose submit is disabled takes no Enter, so there is no try to show the rest on. */
+  const shown = <T extends Record<string, string | undefined>>(errs: T): Partial<T> =>
+    Object.fromEntries(Object.entries(errs).filter(([k]) => touched.has(k))) as Partial<T>
 
   const errors = blank && draft ? stepTwoErrors(blank, draft) : {}
   const ready = Object.keys(errors).length === 0
@@ -142,15 +154,22 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
         </div>
       )}
       {step === 2 && blank?.template && draft && (
-        <form id={`${id}-define`} onSubmit={next} className="grid min-w-0 grid-cols-1 gap-4 [&_[data-slot=native-select-wrapper]]:w-full">
+        <form
+          id={`${id}-define`}
+          onSubmit={next}
+          onBlur={(e: FocusEvent<HTMLFormElement>) => {
+            const name = e.target.getAttribute('name')
+            if (name) touch([name])
+          }}
+          className="grid min-w-0 grid-cols-1 gap-4 [&_[data-slot=native-select-wrapper]]:w-full">
           <TemplateFields
             projectId={projectId}
             template={blank.template}
             fields={draft.fields}
             onChange={(fields) => edit({ fields })}
-            errors={templateFieldErrors(blank.template, draft.fields)}
+            errors={shown(templateFieldErrors(blank.template, draft.fields))}
           />
-          <ConditionFields alert={wizardAlert(blank, draft)} draft={draft} errors={errors} onChange={edit} />
+          <ConditionFields alert={wizardAlert(blank, draft)} draft={draft} errors={shown(errors)} onChange={edit} />
         </form>
       )}
       {step === 3 && blank && draft && (

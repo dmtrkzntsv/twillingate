@@ -161,6 +161,40 @@ describe('NewAlertDialog', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('says what step 2 lacks only once an input is changed or left', async () => {
+    const user = userEvent.setup()
+    renderList()
+    const d = await open(user)
+    await user.click(d.getByRole('button', { name: /^Conversion/ }))
+    await d.findAllByRole('option', { name: 'signup' })
+    expect(d.getByRole('button', { name: 'Next' })).toBeDisabled()
+    expect(d.queryByText('Pick an event', { selector: 'p' })).toBeNull()
+    expect(d.queryByText('Enter a number')).toBeNull()
+    expect(d.getByLabelText('Threshold')).not.toHaveAttribute('aria-invalid')
+
+    // Left without a choice: its line shows; the others still wait.
+    await user.click(d.getByLabelText('From event'))
+    await user.tab()
+    expect(d.getByLabelText('From event')).toHaveAttribute('aria-invalid', 'true')
+    expect(d.getAllByText('Pick an event', { selector: 'p' })).toHaveLength(1)
+    expect(d.queryByText('Enter a number')).toBeNull()
+
+    // Changed, then emptied: a typed threshold cleared says what it needs.
+    await user.type(d.getByLabelText('Threshold'), '5')
+    await user.clear(d.getByLabelText('Threshold'))
+    expect(d.getByText('Enter a number')).toBeInTheDocument()
+
+    // Enter submits nothing while Next is off, and shows no more lines.
+    await user.type(d.getByLabelText('Window'), '{Enter}')
+    expect(d.getAllByText('Pick an event', { selector: 'p' })).toHaveLength(1)
+    expect(d.getByText('Step 2 of 3')).toBeInTheDocument()
+
+    // Another template starts clean.
+    await user.click(d.getByRole('button', { name: 'Back' }))
+    await user.click(d.getByRole('button', { name: /^No events/ }))
+    expect(d.queryByText('Pick an event', { selector: 'p' })).toBeNull()
+  })
+
   it('backtests the new definition after Back, a change and Next, reusing an unchanged one', async () => {
     const user = userEvent.setup()
     renderList()
@@ -254,7 +288,7 @@ describe('NewAlertDialog', () => {
     expect(name.getAttribute('aria-describedby')).toBe(msg.id)
     const button = d.getByRole('button', { name: 'Create alert' })
     expect(button).toBeDisabled()
-    // Enter submits the form all the same: nothing is sent.
+    // Enter sends nothing either.
     await user.type(name, '{Enter}')
     expect(create).not.toHaveBeenCalled()
 

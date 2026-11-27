@@ -32,7 +32,7 @@ interface Props {
  * comparison and value (a percent for a fraction), a change's direction,
  * percent and what it is compared with, or a silence alert's hours; the
  * window in days (not for silence); and the minimum volume where the server
- * takes one for the condition.
+ * takes one for the condition. Each input's `name` is its draft key.
  */
 export default function ConditionFields({ alert, draft, errors, onChange }: Props) {
   const id = useId()
@@ -62,10 +62,10 @@ export default function ConditionFields({ alert, draft, errors, onChange }: Prop
           <Field id={fid('value')} label="Threshold" error={errors.value}>
             {alert.unit === 'fraction' ? (
               <WithUnit unit="%">
-                <Input id={fid('value')} inputMode="decimal" value={draft.value} onChange={(e) => onChange({ value: e.target.value })} {...errorProps(fid('value'), errors.value)} />
+                <Input id={fid('value')} name="value" inputMode="decimal" value={draft.value} onChange={(e) => onChange({ value: e.target.value })} {...errorProps(fid('value'), errors.value)} />
               </WithUnit>
             ) : (
-              <Input id={fid('value')} inputMode="decimal" value={draft.value} onChange={(e) => onChange({ value: e.target.value })} {...errorProps(fid('value'), errors.value)} />
+              <Input id={fid('value')} name="value" inputMode="decimal" value={draft.value} onChange={(e) => onChange({ value: e.target.value })} {...errorProps(fid('value'), errors.value)} />
             )}
           </Field>
         </div>
@@ -81,7 +81,7 @@ export default function ConditionFields({ alert, draft, errors, onChange }: Prop
           </Field>
           <Field id={fid('percent')} label="Percent" error={errors.percent}>
             <WithUnit unit="%">
-              <Input id={fid('percent')} inputMode="decimal" value={draft.percent} onChange={(e) => onChange({ percent: e.target.value })} {...errorProps(fid('percent'), errors.percent)} />
+              <Input id={fid('percent')} name="percent" inputMode="decimal" value={draft.percent} onChange={(e) => onChange({ percent: e.target.value })} {...errorProps(fid('percent'), errors.percent)} />
             </WithUnit>
           </Field>
           <div className="sm:col-span-2">
@@ -96,19 +96,19 @@ export default function ConditionFields({ alert, draft, errors, onChange }: Prop
       )}
       {draft.conditionType === 'silence' && (
         <Field id={fid('hours')} label="Hours without an event" error={errors.hours}>
-          <Input id={fid('hours')} inputMode="numeric" value={draft.hours} onChange={(e) => onChange({ hours: e.target.value })} {...errorProps(fid('hours'), errors.hours)} />
+          <Input id={fid('hours')} name="hours" inputMode="numeric" value={draft.hours} onChange={(e) => onChange({ hours: e.target.value })} {...errorProps(fid('hours'), errors.hours)} />
         </Field>
       )}
       {draft.conditionType !== 'silence' && (
         <Field id={fid('window')} label="Window" error={errors.windowDays}>
           <WithUnit unit="days">
-            <Input id={fid('window')} inputMode="numeric" value={draft.windowDays} onChange={(e) => onChange({ windowDays: e.target.value })} {...errorProps(fid('window'), errors.windowDays)} />
+            <Input id={fid('window')} name="windowDays" inputMode="numeric" value={draft.windowDays} onChange={(e) => onChange({ windowDays: e.target.value })} {...errorProps(fid('window'), errors.windowDays)} />
           </WithUnit>
         </Field>
       )}
       {draftTakesMinVolume(alert, draft) && (
         <Field id={fid('volume')} label="Minimum volume" hint="0 for none" error={errors.minVolume}>
-          <Input id={fid('volume')} inputMode="numeric" value={draft.minVolume} onChange={(e) => onChange({ minVolume: e.target.value })} {...errorProps(fid('volume'), errors.minVolume)} />
+          <Input id={fid('volume')} name="minVolume" inputMode="numeric" value={draft.minVolume} onChange={(e) => onChange({ minVolume: e.target.value })} {...errorProps(fid('volume'), errors.minVolume)} />
         </Field>
       )}
     </>
