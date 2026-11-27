@@ -92,6 +92,18 @@ describe('AlertPage', () => {
     expect(facts()).not.toHaveTextContent('days')
   })
 
+  it("shows a broken alert's history, with the error that broke it", async () => {
+    serveAlerts([brokenAlert({ id: 9 })])
+    const history = vi.spyOn(endpoints, 'alertHistory').mockResolvedValue({
+      evaluations: [{ id: 1, at: '2026-11-25T06:00:00Z', from: '', to: '', value: 4.5, compare: null, volume: null, outcome: 'broken', error: 'unknown event purchase' }],
+    })
+    renderPage('9')
+    const region = await screen.findByRole('region', { name: 'History' })
+    expect(history).toHaveBeenCalledWith(1, 9, undefined)
+    expect(await within(region).findByText('unknown event purchase')).toBeInTheDocument()
+    expect(within(region).getByText('4.5')).toBeInTheDocument()
+  })
+
   it("shows a no-data alert's reason, and no reason for an ok one", async () => {
     serveAlerts([alert({ id: 7, state: 'no_data', reason: 'Under the minimum volume' }), alert({ id: 8, name: 'Fine', reason: 'stale' })])
     const { unmount } = renderPage('7')

@@ -50,7 +50,7 @@ export default function AlertHistory({ projectId, alert }: { projectId: number; 
   const rows = history.data?.pages.flatMap((p) => p.evaluations)
   return (
     <section aria-labelledby={id + '-title'} className="flex min-w-0 flex-col gap-3">
-      <h3 id={id + '-title'}className="text-base font-semibold">
+      <h3 id={id + '-title'} className="text-base font-semibold">
         History
       </h3>
       {history.error && !history.data ? (
@@ -82,13 +82,16 @@ export default function AlertHistory({ projectId, alert }: { projectId: number; 
                   <TableCell className={WIDE}>{formatAlertValue('count', e.volume)}</TableCell>
                   <TableCell className="whitespace-normal">
                     <span className={OUTCOME_COLOURS[e.outcome]}>{e.outcome === 'error' ? 'Error' : stateLabel(e.outcome)}</span>
-                    {e.error && <p className="text-xs break-words text-muted-foreground">{e.error}</p>}
+                    {e.error && <p className="text-xs [overflow-wrap:anywhere] text-muted-foreground">{e.error}</p>}
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          {history.hasNextPage && (
+          {history.isFetchNextPageError && (
+            <LoadError what="more of the history" error={history.error!} onRetry={() => void history.fetchNextPage()} />
+          )}
+          {history.hasNextPage && !history.isFetchNextPageError && (
             <Button type="button" variant="outline" size="sm" className="self-start" disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>
               Load more
             </Button>

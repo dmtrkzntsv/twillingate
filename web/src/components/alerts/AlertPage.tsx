@@ -17,8 +17,8 @@ import { formatAgo } from '@/lib/units'
 import AlertActions from './AlertActions'
 import AlertBacktest from './AlertBacktest'
 import AlertDefinition from './AlertDefinition'
-import AlertHistory from './AlertHistory'
 import AlertEditor from './AlertEditor'
+import AlertHistory from './AlertHistory'
 import AlertStateBadge from './AlertStateBadge'
 
 /** How often the alert lists are read while the alert's check is pending: the runner serves one within a minute. */
@@ -166,7 +166,7 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
         />
       )}
       {!isArchived && alert.kind !== '' && <AlertBacktest projectId={projectId} alert={alert} draft={draft} />}
-      {alert.kind !== '' && <AlertHistory projectId={projectId} alert={alert} />}
+      <AlertHistory projectId={projectId} alert={alert} />
     </div>
   )
 }

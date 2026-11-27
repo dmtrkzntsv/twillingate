@@ -50,7 +50,7 @@ describe('AlertHistory', () => {
     expect(within(second).getAllByText('—')).toHaveLength(3)
   })
 
-  it('formats a fraction as a percent and shows a silence check without days', async () => {
+  it('formats a fraction as a percent', async () => {
     vi.spyOn(endpoints, 'alertHistory').mockResolvedValue({ evaluations: [evaluation({ value: 0.034, compare: null, volume: null })] })
     renderWithProviders(<AlertHistory projectId={3} alert={alert({ unit: 'fraction' })} />)
     expect(await screen.findByText('3.4%')).toBeInTheDocument()
@@ -70,7 +70,7 @@ describe('AlertHistory', () => {
     })
     renderWithProviders(<AlertHistory projectId={3} alert={alert()} />)
     expect(await screen.findByText('Error')).toBeInTheDocument()
-    expect(screen.getByText('query timed out')).toHaveClass('text-muted-foreground', 'break-words')
+    expect(screen.getByText('query timed out')).toHaveClass('text-muted-foreground', '[overflow-wrap:anywhere]')
     expect(screen.getByText('Broken')).toHaveClass('text-amber-600')
   })
 
@@ -86,6 +86,23 @@ describe('AlertHistory', () => {
     expect(spy).toHaveBeenLastCalledWith(3, 7, 'c1')
     expect(rows()).toHaveLength(2)
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  it('shows the error when the next page fails, with Retry in place of Load more', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'alertHistory')
+      .mockResolvedValueOnce({ evaluations: [evaluation({ id: 2, value: 10 })], next_cursor: 'c1' })
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ evaluations: [evaluation({ id: 1, value: 20 })] })
+    renderWithProviders(<AlertHistory projectId={3} alert={alert({ id: 7 })} />)
+    await screen.findByText('10')
+    await userEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText(/boom/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.getByText('10')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('20')).toBeInTheDocument()
+    expect(spy).toHaveBeenLastCalledWith(3, 7, 'c1')
   })
 
   it('has no Load more without a next cursor', async () => {
