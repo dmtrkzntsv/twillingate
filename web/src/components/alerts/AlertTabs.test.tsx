@@ -63,10 +63,30 @@ describe('AlertTabs', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(/^\/projects\/1\/alerts$/)
   })
 
-  it('marks Archived current on the page of an alert the live list lacks', async () => {
-    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert({ id: 3 })] })
+  it('marks Archived current on the page of an alert the archived list holds', async () => {
+    vi.spyOn(endpoints, 'alerts').mockImplementation(async (_p, archived) => ({
+      max_live: 50,
+      alerts: archived ? [alert({ id: 12, archived_at: '2026-11-20T00:00:00Z' })] : [alert({ id: 3 })],
+    }))
     renderTabs('/projects/1/alerts/12', '12')
     await vi.waitFor(() => expect(current()).toBe('Archived'))
+    expect(endpoints.alerts).toHaveBeenCalledWith(1, true)
+  })
+
+  it('marks none current on the page of an alert in neither list', async () => {
+    vi.spyOn(endpoints, 'alerts').mockImplementation(async (_p, archived) => ({ max_live: 50, alerts: archived ? [] : [alert({ id: 3 })] }))
+    renderTabs('/projects/1/alerts/12', '12')
+    await vi.waitFor(() => expect(endpoints.alerts).toHaveBeenCalledWith(1, true))
+    // Both lists answered, and still neither tab is the alert's.
+    await new Promise((r) => setTimeout(r, 20))
+    expect(current()).toBeNull()
+  })
+
+  it('reads no archived list for a live alert', async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert({ id: 12 })] })
+    renderTabs('/projects/1/alerts/12', '12')
+    await vi.waitFor(() => expect(current()).toBe('Live'))
+    expect(endpoints.alerts).not.toHaveBeenCalledWith(1, true)
   })
 
   it('marks none current while the live list loads', () => {

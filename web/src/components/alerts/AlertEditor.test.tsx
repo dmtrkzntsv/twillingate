@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { toast } from 'sonner'
@@ -76,6 +76,23 @@ describe('AlertEditor', () => {
     await user.click(f.getByRole('button', { name: 'Discard' }))
     expect(f.getByLabelText('Threshold')).toHaveValue('50')
     expect(f.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('sends one save while one is on its way, however often the form is submitted', async () => {
+    serveAlerts([alert({ id: 7 })])
+    const update = vi.spyOn(endpoints, 'updateAlert').mockReturnValue(new Promise(() => {}))
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    await user.clear(f.getByLabelText('Threshold'))
+    await user.type(f.getByLabelText('Threshold'), '40')
+    const settings = screen.getByRole('form', { name: 'Alert settings' })
+    fireEvent.submit(settings)
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    fireEvent.submit(settings)
+    fireEvent.submit(settings)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(update).toHaveBeenCalledTimes(1)
   })
 
   it('shows an error under its field and keeps Save disabled', async () => {

@@ -56,7 +56,7 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
 
   const save = async (e: FormEvent) => {
     e.preventDefault()
-    if (!changed || invalid) return
+    if (!changed || invalid || actions.pending) return
     setRefusal(null)
     setWarnings([])
     const definition = definitionChanged(alert, draft)
