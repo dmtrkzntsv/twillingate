@@ -29,6 +29,11 @@ const REQUIRED_EVENTS: Record<NonNullable<Alert['template']>, string[]> = {
   no_events: ['event'],
 }
 
+/** The required event fields of a template that are empty, by field key, each with the line shown under it. */
+export function templateFieldErrors(template: Template, fields: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(REQUIRED_EVENTS[template].filter((k) => !fields[k]).map((k) => [k, 'Pick an event']))
+}
+
 /** The number a text means; NaN for empty text, which `Number` would read as 0. */
 function num(text: string): number {
   return text.trim() === '' ? NaN : Number(text)
@@ -165,7 +170,11 @@ export function draftErrors(a: Alert, d: AlertDraft): DraftErrors {
     // Infinity (`1e400` included) is at least 1, but a save would send it as null.
     if (!(v === 0 || (Number.isFinite(v) && v >= 1))) errs.minVolume = '0 for none, or at least 1'
   }
-  if (a.template && REQUIRED_EVENTS[a.template].some((k) => !d.fields[k])) errs.fields = 'Choose an event'
+  if (a.template) {
+    // The editor shows each line under its field; this one says only that some field is wrong.
+    const [first] = Object.values(templateFieldErrors(a.template, d.fields))
+    if (first) errs.fields = first
+  }
   return errs
 }
 

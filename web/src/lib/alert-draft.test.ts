@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { alert, brokenAlert } from '@/test/alerts'
-import { addEdits, definitionChanged, draftErrors, draftOf, draftWith, patchOf, previewBody } from './alert-draft'
+import { addEdits, definitionChanged, draftErrors, draftOf, draftWith, patchOf, previewBody, templateFieldErrors } from './alert-draft'
 
 const rate = () =>
   alert({ unit: 'fraction', read: { metric: 'rate', volume: 'count' }, condition: { type: 'threshold', op: 'below', value: 0.03 }, window_days: 7, min_volume: 100 })
@@ -248,5 +248,25 @@ describe('draftErrors', () => {
     const a = brokenAlert()
     expect(draftErrors(a, draftOf(a))).toEqual({})
     expect(draftErrors(a, { ...draftOf(a), name: '' })).toHaveProperty('name')
+  })
+})
+
+describe('templateFieldErrors', () => {
+  it('names each required event field left empty, by its key', () => {
+    expect(templateFieldErrors('event_count', {})).toEqual({ event: 'Pick an event' })
+    expect(templateFieldErrors('conversion', { from_event: 'visit' })).toEqual({ to_event: 'Pick an event' })
+    expect(templateFieldErrors('conversion', {})).toEqual({ from_event: 'Pick an event', to_event: 'Pick an event' })
+    expect(templateFieldErrors('no_events', { event: '' })).toEqual({ event: 'Pick an event' })
+  })
+
+  it('finds none when the required fields are filled or the template requires none', () => {
+    expect(templateFieldErrors('event_count', { event: 'signup' })).toEqual({})
+    expect(templateFieldErrors('unique_people', {})).toEqual({})
+  })
+
+  it('is what draftErrors reports for the template, under fields', () => {
+    const a = alert({ template: 'event_count', fields: { event: 'signup' } })
+    expect(draftErrors(a, { ...draftOf(a), fields: {} }).fields).toBe('Pick an event')
+    expect(draftErrors(a, draftOf(a)).fields).toBeUndefined()
   })
 })

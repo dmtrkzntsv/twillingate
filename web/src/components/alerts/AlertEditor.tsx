@@ -3,10 +3,11 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AlertActions } from '@/hooks/use-alert-actions'
-import { draftErrors, draftOf, patchOf, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
+import { draftErrors, draftOf, patchOf, templateFieldErrors, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
 import { ApiError, type Alert } from '@/lib/api'
 import { toastError } from '@/lib/toast-error'
-import ConditionFields, { errorProps, Field } from './ConditionFields'
+import ConditionFields from './ConditionFields'
+import { errorProps, Field } from './Field'
 import TemplateFields from './TemplateFields'
 
 /** A save's warning as the form says it: `Never sent yet: <name>` for an event the project never sent, any other as the server words it. */
@@ -86,7 +87,7 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
           <Input id={`${id}-name`} value={draft.name} onChange={(e) => onEdit({ name: e.target.value })} {...errorProps(`${id}-name`, errors.name)} />
         </Field>
         {!broken && alert.template && (
-          <TemplateFields projectId={projectId} template={alert.template} fields={draft.fields} onChange={(fields) => onEdit({ fields })} error={errors.fields} />
+          <TemplateFields projectId={projectId} template={alert.template} fields={draft.fields} onChange={(fields) => onEdit({ fields })} errors={templateFieldErrors(alert.template, draft.fields)} />
         )}
         {!broken && <ConditionFields alert={alert} draft={draft} errors={errors} onChange={onEdit} />}
       </fieldset>

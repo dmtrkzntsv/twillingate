@@ -1,32 +1,11 @@
 import type { ReactNode } from 'react'
 import { useId } from 'react'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { draftTakesMinVolume, type AlertDraft, type DraftErrors } from '@/lib/alert-draft'
 import { conditionTypes } from '@/lib/alerts'
 import type { Alert } from '@/lib/api'
-
-/** The attributes that tie a control to its error line: invalid while there is one. */
-export function errorProps(id: string, error: string | undefined) {
-  return error ? { 'aria-invalid': true, 'aria-describedby': `${id}-error` } : {}
-}
-
-/** One labelled input of the editor: the label, the control, a hint under it, and its error under that. */
-export function Field({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      {error && (
-        <p id={`${id}-error`} className="text-sm text-destructive">
-          {error}
-        </p>
-      )}
-    </div>
-  )
-}
+import { errorProps, Field } from './Field'
 
 /** An input with its unit after it (`%`, `days`). */
 function WithUnit({ unit, children }: { unit: string; children: ReactNode }) {
