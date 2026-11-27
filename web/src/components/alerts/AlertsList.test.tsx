@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { ApiError, endpoints } from '@/lib/api'
 import { alert, brokenAlert } from '@/test/alerts'
@@ -44,13 +47,14 @@ describe('AlertsList', () => {
     expect(endpoints.alerts).toHaveBeenCalledWith(1, false)
   })
 
-  it('says agents make alerts when the project has none', async () => {
+  it('offers a template or an agent when the project has none', async () => {
     vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [] })
     renderList()
     const empty = await screen.findByRole('region', { name: 'No alerts yet' })
     expect(empty).toHaveTextContent(
-      'Alerts are made by an agent connected over MCP. Ask it, for example, to alert you when signups drop 30% against the week before.'
+      'Create one from a template, or ask an agent connected over MCP: for example, to alert you when signups drop 30% against the week before.'
     )
+    expect(within(empty).getByRole('button', { name: 'New alert' })).toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Alerts' })).toBeNull()
   })
 
@@ -85,5 +89,28 @@ describe('AlertsList', () => {
     renderList()
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the alerts. boom")
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+  it('closes the wizard when it can no longer be shown, so it does not reopen by itself', async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert()] })
+    const tree = (archived: boolean) => (
+      <MemoryRouter initialEntries={['/projects/1/alerts']}>
+        <Routes>
+          <Route path="/projects/:id/alerts" element={<AlertsList projectId={1} projectArchived={archived} />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    const { client, rerender } = renderWithProviders(tree(false))
+    const wrap = (archived: boolean) => (
+      <QueryClientProvider client={client}>
+        <TooltipProvider>{tree(archived)}</TooltipProvider>
+      </QueryClientProvider>
+    )
+    await userEvent.click(await screen.findByRole('button', { name: 'New alert' }))
+    expect(await screen.findByRole('dialog', { name: 'New alert' })).toBeInTheDocument()
+    rerender(wrap(true))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    rerender(wrap(false))
+    await screen.findByRole('button', { name: 'New alert' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

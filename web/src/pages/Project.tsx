@@ -200,7 +200,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms' | 'ale
               )
             ) : dashId === ALERTS_ID ? (
               params.alertId === undefined ? (
-                <AlertsList projectId={id} />
+                <AlertsList projectId={id} projectArchived={!!project.archived} />
               ) : (
                 <AlertPage key={params.alertId} project={project} alertId={params.alertId} />
               )

@@ -277,3 +277,30 @@ test("the Alerts pages show the pointer: the list, an alert's page and its snooz
     await request.post(`/api/projects/${project.id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
   }
 })
+
+test('the New alert wizard shows the pointer on every step', async ({ page, request }) => {
+  test.setTimeout(90_000)
+  const project = await createProject(request, `cursor-wizard-${Date.now()}`, [])
+  try {
+    await login(page)
+    await page.goto(`/app/projects/${project.id}/alerts`)
+    await page.getByRole('button', { name: 'New alert' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New alert' })
+    await expect(dialog.getByText('Step 1 of 3')).toBeVisible()
+    expect(await withoutPointer(page), 'step 1: templates and Cancel').toEqual([])
+    await dialog.getByRole('button', { name: /^Event count/ }).click()
+    await expect(dialog.getByText('Step 2 of 3')).toBeVisible()
+    await dialog.getByLabel('Event', { exact: true }).selectOption('$page_view')
+    await dialog.getByLabel('Threshold', { exact: true }).fill('0.5')
+    // Filled first: a disabled Next is not checked.
+    await expect(dialog.getByRole('button', { name: 'Next' })).toBeEnabled()
+    expect(await withoutPointer(page), 'step 2: Back and Next').toEqual([])
+    await dialog.getByRole('button', { name: 'Next' }).click()
+    await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Create alert' })).toBeEnabled()
+    expect(await withoutPointer(page), 'step 3: Back and Create alert').toEqual([])
+    await page.keyboard.press('Escape')
+  } finally {
+    await request.post(`/api/projects/${project.id}/archive`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+  }
+})

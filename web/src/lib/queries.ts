@@ -144,6 +144,13 @@ export const alertPreviewQuery = (projectId: number, id: number, definition: str
   staleTime: 5 * 60_000,
 })
 
+/** The backtest of an alert not yet created (the New alert wizard's): preview_alert of its definition, keyed on that definition, so a changed one runs again and an unchanged one is read from the cache for five minutes. */
+export const newAlertPreviewQuery = (projectId: number, body: Parameters<typeof endpoints.previewAlert>[1]) => ({
+  queryKey: ['alert-preview-new', projectId, JSON.stringify(body)] as const,
+  queryFn: () => endpoints.previewAlert(projectId, body),
+  staleTime: 5 * 60_000,
+})
+
 /** A project's forms, the active ones or the archived ones. */
 export const formsQuery = (projectId: number, archived = false) => ({
   queryKey: ['forms', projectId, archived ? 'archived' : 'active'] as const,

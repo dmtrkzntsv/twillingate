@@ -21,6 +21,8 @@ export interface AlertActions {
    * answered) goes to it instead of a toast, so a form can show it.
    */
   update(id: number, patch: AlertPatch, opts?: { onRefusal?: (err: unknown) => void }): Promise<Alert | null>
+  /** Creates an alert from a template (create_alert) into the live list; a refusal goes to `onRefusal` when given, as a save's does. */
+  create(body: Parameters<typeof endpoints.createAlert>[1], opts?: { onRefusal?: (err: unknown) => void }): Promise<Alert | null>
   /** The `check_requested_at` of the check this hook asked for alert `id` (Check now, or a save that asks for one: a new definition, a resume, a wake), until it is told the check is done or dropped (a pause, a snooze or an archive from here); undefined when none. A check of another request time is not this hook's (another client asked for one since). */
   asked(id: number): string | undefined
   /** Forgets the check asked for alert `id`, once its pending check has cleared: its result said, or found not to be this hook's request. */
@@ -48,15 +50,15 @@ function upsert(alerts: Alert[], a: Alert): Alert[] {
 }
 
 /**
- * Every write to one of a project's alerts, each update_alert or its
- * archive, restore or check route. The answered alert goes into the list it
- * now belongs to (the archived one once archived) and out of the other,
- * each only where that list is already loaded, so the page follows at once;
- * then the project's alert lists refetch. A failure toasts its message
- * (or goes to a save's `onRefusal`), refetches the lists too, and resolves
- * null instead of throwing. The page that shows the alert calls
- * this once and hands it down, so a check asked for anywhere on it is the
- * page's to report when it is done (`asked`).
+ * Every write to one of a project's alerts, its create_alert, each
+ * update_alert or its archive, restore or check route. The answered alert
+ * goes into the list it now belongs to (the archived one once archived) and
+ * out of the other, each only where that list is already loaded, so the
+ * page follows at once; then the project's alert lists refetch. A failure
+ * toasts its message (or goes to a save's `onRefusal`), refetches the lists
+ * too, and resolves null instead of throwing. The page that shows the alert
+ * calls this once and hands it down, so a check asked for anywhere on it is
+ * the page's to report when it is done (`asked`).
  */
 export function useAlertActions(projectId: number): AlertActions {
   const client = useQueryClient()
@@ -127,6 +129,7 @@ export function useAlertActions(projectId: number): AlertActions {
     archive: (id) => run(() => endpoints.archiveAlert(projectId, id), 'drops'),
     restore: (id) => run(() => endpoints.restoreAlert(projectId, id)),
     update: (id, patch, opts) => save(id, patch, opts?.onRefusal),
+    create: (body, opts) => run(() => endpoints.createAlert(projectId, body), 'none', opts?.onRefusal),
     asked,
     forget,
   }

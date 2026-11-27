@@ -1001,6 +1001,11 @@ export const endpoints = {
   /** A project's alerts by name; `archived` lists the archived ones instead. */
   alerts: (projectId: number, archived = false) =>
     api<AlertsResponse>(`/api/projects/${projectId}/alerts${toQuery({ archived: archived || undefined })}`),
+  /** Creates an alert from a template; answers it as list_alerts does, with `warnings` for what the project has never sent. */
+  createAlert: (
+    projectId: number,
+    body: AlertSource & { name: string; condition: AlertCondition; window_days?: number; min_volume?: number },
+  ) => api<Alert>(`/api/projects/${projectId}/alerts`, json('POST', body)),
   updateAlert: (projectId: number, id: number, patch: AlertPatch) =>
     api<Alert>(alertPath(projectId, id), json('PATCH', patch)),
   archiveAlert: (projectId: number, id: number) => api<Alert>(`${alertPath(projectId, id)}/archive`, json('POST', {})),

@@ -10,6 +10,8 @@ import {
   describeSource,
   formatAlertValue,
   inputToThreshold,
+  warningsText,
+  warningText,
   snoozeUntil,
   stateLabel,
   takesMinVolume,
@@ -93,6 +95,9 @@ describe('describeCondition', () => {
     expect(
       describeCondition({ condition: { type: 'threshold', op: 'above', value: 2.456 }, unit: 'number', window_days: 2 }),
     ).toBe('above 2.46 over 2 days')
+    expect(
+      describeCondition({ condition: { type: 'threshold', op: 'below', value: 0.5 }, unit: 'count', window_days: 1 }),
+    ).toBe('below 0.5 over 1 day')
   })
   it('describes changes', () => {
     const c = (direction: 'drop' | 'rise' | 'either', against: 'previous' | 'week_ago'): AlertCondition => ({
@@ -292,5 +297,18 @@ describe('checkBlocked', () => {
   })
   it('is null for an alert that may be checked', () => {
     expect(checkBlocked(alert({ state: 'breached' }))).toBeNull()
+  })
+})
+
+describe('warningText', () => {
+  const never = (name: string) => `\`${name}\` has never been sent by this project; the alert reads no_data until it is`
+  it('says an event the project never sent as Never sent yet, any other warning as the server words it', () => {
+    expect(warningText(never('signup'))).toBe('Never sent yet: signup')
+    expect(warningText('something else')).toBe('something else')
+  })
+  it('joins the events never sent into one line, the other warnings after it', () => {
+    expect(warningsText([never('signup'), 'something else', never('paid')])).toEqual(['Never sent yet: signup, paid', 'something else'])
+    expect(warningsText(['something else'])).toEqual(['something else'])
+    expect(warningsText([])).toEqual([])
   })
 })

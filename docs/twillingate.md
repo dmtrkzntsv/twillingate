@@ -1191,7 +1191,11 @@ project's tab row) lists a project's alerts with their last value, recent
 evaluations and state; an alert's page edits its name, condition, window,
 minimum volume and template fields, pauses, snoozes, archives and restores it,
 backtests a change before it is saved, shows its history, and asks for a check.
-Alerts are created by an agent for now.
+Alerts are created by an agent, or with the tab's **New alert** wizard from the
+four [templates](#templates) (event count, unique people, conversion, no
+events): pick one, fill in its fields and when it fires, see its backtest, then
+keep or change the suggested name and create it. The button is disabled at
+the live-alert limit and absent on an archived project.
 
 **What it watches.** A `stat` or a `funnel` of the [structured
 query](#structured-queries) language, and a `read` naming its one number. A

@@ -2,12 +2,12 @@ import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import LoadError from '@/components/projects/LoadError'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { TEMPLATE_DEFAULTS } from '@/lib/alerts'
 import type { Alert } from '@/lib/api'
 import { dashboardsQuery, eventNamesQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
+import { errorProps, Field } from './Field'
 
 /** The event a page view is stored under: the only one a path narrows in event_count and no_events (a conversion step's path narrows any event). The event list leaves out `$` names, so it is offered on its own. */
 const PAGE_VIEW = '$page_view'
@@ -45,8 +45,8 @@ interface Props {
   fields: Record<string, string>
   /** The fields changed, by key; the others are left out, so the page keeps following the saved alert's. */
   onChange: (changed: Record<string, string>) => void
-  /** Shown under the fields. */
-  error?: string
+  /** A field's error, by its key, shown under that field. */
+  errors?: Partial<Record<string, string>>
 }
 
 /**
@@ -59,9 +59,10 @@ interface Props {
  * always, kept across a change of event; and the people a template counts,
  * its default shown when the field is absent. An empty field is an absent
  * one. When the event names fail to load, it says so, with Retry, above
- * pickers that still offer `$page_view` and the fields' own values.
+ * pickers that still offer `$page_view` and the fields' own values. Each
+ * control's `name` is its field's key.
  */
-export default function TemplateFields({ projectId, template, fields, onChange, error }: Props) {
+export default function TemplateFields({ projectId, template, fields, onChange, errors }: Props) {
   const id = useId()
   const tz = useQuery(dashboardsQuery).data?.timezone ?? 'UTC'
   const names = useQuery(eventNamesQuery(projectId, resolve('30d', tz)))
@@ -78,10 +79,11 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
         const showPath = f.path !== undefined && (!f.path.viewsOnly || value === PAGE_VIEW)
         return (
           <div key={f.key} className="grid min-w-0 grid-cols-1 gap-3">
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <Label htmlFor={`${id}-${f.key}`}>{f.label}</Label>
+            <Field id={`${id}-${f.key}`} label={f.label} error={errors?.[f.key]}>
               <NativeSelect
                 id={`${id}-${f.key}`}
+                name={f.key}
+                {...errorProps(`${id}-${f.key}`, errors?.[f.key])}
                 className="max-w-full"
                 value={value}
                 onChange={(e) => {
@@ -89,31 +91,30 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
                   onChange(f.path?.viewsOnly && next !== PAGE_VIEW ? { [f.key]: next, [f.path.key]: '' } : { [f.key]: next })
                 }}
               >
-                {(f.every !== undefined || value === '') && <NativeSelectOption value="">{f.every ?? 'Choose an event'}</NativeSelectOption>}
+                {(f.every !== undefined || value === '') && <NativeSelectOption value="">{f.every ?? 'Pick an event'}</NativeSelectOption>}
                 {choices.map((c) => (
                   <NativeSelectOption key={c} value={c}>
                     {c}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
-            </div>
+            </Field>
             {f.path && showPath && (
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <Label htmlFor={`${id}-${f.path.key}`}>{f.path.label}</Label>
+              <Field id={`${id}-${f.path.key}`} label={f.path.label}>
                 <Input
                   id={`${id}-${f.path.key}`}
+                  name={f.path.key}
                   value={fields[f.path.key] ?? ''}
                   placeholder="Every page"
                   onChange={(e) => onChange({ [f.path!.key]: e.target.value })}
                 />
-              </div>
+              </Field>
             )}
           </div>
         )
       })}
       {people && (
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <Label htmlFor={`${id}-${people.key}`}>{people.label}</Label>
+        <Field id={`${id}-${people.key}`} label={people.label}>
           <NativeSelect id={`${id}-${people.key}`} value={fields[people.key] || (TEMPLATE_DEFAULTS[template]?.[people.key] ?? '')} onChange={(e) => onChange({ [people.key]: e.target.value })}>
             {people.choices.map(([v, label]) => (
               <NativeSelectOption key={v} value={v}>
@@ -121,9 +122,8 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
               </NativeSelectOption>
             ))}
           </NativeSelect>
-        </div>
+        </Field>
       )}
-      {error && <p className="text-sm text-destructive">{error}</p>}
     </div>
   )
 }
