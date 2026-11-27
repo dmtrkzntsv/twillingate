@@ -6,7 +6,7 @@ export function errorProps(id: string, error: string | undefined) {
   return error ? { 'aria-invalid': true, 'aria-describedby': `${id}-error` } : {}
 }
 
-/** One labelled input of the editor: the label, the control, a hint under it, and its error under that. */
+/** One labelled input of the editor: the label, the control, a hint under it, and its error under that, which breaks anywhere (a refusal naming a long snake_case event) rather than widen the form. */
 export function Field({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
@@ -14,7 +14,7 @@ export function Field({ id, label, hint, error, children }: { id: string; label:
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       {error && (
-        <p id={`${id}-error`} className="text-sm text-destructive">
+        <p id={`${id}-error`} className="text-sm [overflow-wrap:anywhere] text-destructive">
           {error}
         </p>
       )}
