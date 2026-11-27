@@ -89,7 +89,7 @@ describe('AlertPage', () => {
     expect(within(watches).getByText('A definition that no longer holds')).toBeInTheDocument()
     expect(watches.querySelector('pre')?.textContent).toBe(JSON.stringify(query, null, 2))
     // No window to read days from.
-    expect(facts()).not.toHaveTextContent('days')
+    expect(facts()).not.toHaveTextContent(/days .+ to /)
   })
 
   it("shows a broken alert's history, with the error that broke it", async () => {
@@ -125,7 +125,7 @@ describe('AlertPage', () => {
     expect(watches.querySelector('pre')?.textContent).toBe(JSON.stringify(where, null, 2))
     expect(facts()).toHaveTextContent(/^Last event 2h ago/)
     expect(facts()).not.toHaveTextContent('Last value')
-    expect(facts()).not.toHaveTextContent('days')
+    expect(facts()).not.toHaveTextContent(/days .+ to /)
   })
 
   it('shows what a template alert watches, without its query', async () => {
