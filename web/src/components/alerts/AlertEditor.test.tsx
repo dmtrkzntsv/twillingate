@@ -158,7 +158,7 @@ describe('AlertEditor', () => {
     expect(preview.mock.calls.filter(([, body]) => 'id' in body)).toHaveLength(1)
   })
 
-  it('reads the saved backtest again after a save that kept updated_at (two edits within a second)', async () => {
+  it('reads the saved backtest of a new definition even when the save kept updated_at (two edits within a second)', async () => {
     const a = alert({ id: 7 })
     const { lists } = serveAlerts([a])
     const preview = vi.mocked(endpoints.previewAlert)
