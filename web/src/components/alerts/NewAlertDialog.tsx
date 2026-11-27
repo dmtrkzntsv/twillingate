@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FocusEvent, type FormEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -8,9 +8,10 @@ import { Input } from '@/components/ui/input'
 import { useAlertActions, type AlertActions } from '@/hooks/use-alert-actions'
 import { templateFieldErrors, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
 import { blankAlert, blankDraft, createBody, nameError as checkName, stepTwoErrors, suggestName, TEMPLATES, wizardAlert } from '@/lib/alert-wizard'
-import { warningsText } from '@/lib/alerts'
-import { ApiError, endpoints, errorMessage, type Alert } from '@/lib/api'
+import { definitionKey, warningsText } from '@/lib/alerts'
+import { ApiError, errorMessage, type Alert, type AlertPreview } from '@/lib/api'
 import { alertPath, rangeParams } from '@/lib/project-tabs'
+import { alertPreviewQuery, newAlertPreviewQuery } from '@/lib/queries'
 import { BacktestAnswer } from './BacktestResult'
 import ConditionFields from './ConditionFields'
 import { errorProps, Field } from './Field'
@@ -20,14 +21,10 @@ type Template = NonNullable<Alert['template']>
 
 const STEP_TITLES = { 1: 'Template', 2: 'What and when', 3: 'Backtest and name' } as const
 
-/** The backtest of the alert the wizard would create: preview_alert of its body without the name, keyed on that body, so a changed definition runs again and an unchanged one is read from the cache. */
+/** The backtest of the alert the wizard would create: preview_alert of its body without the name. */
 function Backtest({ projectId, blank, draft }: { projectId: number; blank: Alert; draft: AlertDraft }) {
   const { name: _name, ...body } = createBody(blank, draft)
-  const q = useQuery({
-    queryKey: ['alert-preview-new', projectId, JSON.stringify(body)],
-    queryFn: () => endpoints.previewAlert(projectId, body),
-    staleTime: 5 * 60_000,
-  })
+  const q = useQuery(newAlertPreviewQuery(projectId, body))
   return <BacktestAnswer alert={wizardAlert(blank, draft)} query={q} />
 }
 
@@ -42,6 +39,7 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
   const id = useId()
   const navigate = useNavigate()
   const [url] = useSearchParams()
+  const client = useQueryClient()
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [blank, setBlank] = useState<Alert | null>(null)
   const [draft, setDraft] = useState<AlertDraft | null>(null)
@@ -108,7 +106,8 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
     creating.current = true
     setNameRefusal('')
     setRefusal('')
-    const made = await actions.create(createBody(blank, draft), {
+    const body = createBody(blank, draft)
+    const made = await actions.create(body, {
       // A taken name and the live-alert limit (409) are said under the name; any other refusal under the step.
       onRefusal: (err) => (err instanceof ApiError && err.status === 409 ? setNameRefusal(err.message) : setRefusal(errorMessage(err))),
     })
@@ -117,6 +116,10 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
       creating.current = false
       return
     }
+    // The backtest step 3 showed is the new alert's: its page reads it from the cache instead of running it again, as old as it was.
+    const { name: _name, ...definition } = body
+    const backtest = client.getQueryState<AlertPreview>(newAlertPreviewQuery(projectId, definition).queryKey)
+    if (backtest?.data) client.setQueryData(alertPreviewQuery(projectId, made.id, definitionKey(made)).queryKey, backtest.data, { updatedAt: backtest.dataUpdatedAt })
     toast.success('Alert created')
     for (const w of warningsText(made.warnings ?? [])) toast(w)
     onClose()

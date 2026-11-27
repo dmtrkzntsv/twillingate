@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { toast } from 'sonner'
 import { ApiError, endpoints, type Alert, type AlertPreview, type AlertsResponse } from '@/lib/api'
-import { alertsQuery } from '@/lib/queries'
+import { definitionKey } from '@/lib/alerts'
+import { alertPreviewQuery, alertsQuery } from '@/lib/queries'
 import { alert } from '@/test/alerts'
 import { renderWithProviders } from '@/test/render'
 import AlertsList from './AlertsList'
@@ -140,6 +141,9 @@ describe('NewAlertDialog', () => {
     expect(toast).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(client.getQueryData<AlertsResponse>(alertsQuery(1, false).queryKey)?.alerts).toEqual([MADE])
+    // Its page reads the backtest step 3 ran rather than running it again.
+    expect(client.getQueryData(alertPreviewQuery(1, 42, definitionKey(MADE)).queryKey)).toEqual(PREVIEW)
+    expect(endpoints.previewAlert).toHaveBeenCalledTimes(1)
   })
 
   it('stays open while the create runs, then closes on its answer', async () => {
