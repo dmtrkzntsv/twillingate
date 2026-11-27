@@ -137,12 +137,9 @@ export const alertHistoryQuery = (projectId: number, id: number) =>
     getNextPageParam: (last) => last.next_cursor,
   })
 
-/** The key every kept backtest of a saved alert starts with, whatever edit it was of. */
-export const alertPreviewsKey = (projectId: number, id: number) => ['alert-preview', projectId, id] as const
-
-/** A saved alert's backtest, of the alert as it was last edited (`updatedAt`, its `updated_at`), so an edit from anywhere reads it afresh; the past does not change within minutes, so it is kept five. */
-export const alertPreviewQuery = (projectId: number, id: number, updatedAt: string) => ({
-  queryKey: [...alertPreviewsKey(projectId, id), updatedAt] as const,
+/** A saved alert's backtest, of its definition (`definition`, its `definitionKey`), so a new definition from anywhere reads it afresh and a rename, a pause or a snooze does not; the past does not change within minutes, so it is kept five. */
+export const alertPreviewQuery = (projectId: number, id: number, definition: string) => ({
+  queryKey: ['alert-preview', projectId, id, definition] as const,
   queryFn: () => endpoints.previewAlert(projectId, { id }),
   staleTime: 5 * 60_000,
 })

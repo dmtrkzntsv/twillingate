@@ -5,6 +5,7 @@ import {
   breachedSince,
   checkBlocked,
   conditionTypes,
+  definitionKey,
   describeCondition,
   describeSource,
   formatAlertValue,
@@ -257,6 +258,25 @@ describe('stateLabel', () => {
   })
   it('names a state it does not know as it is sent', () => {
     expect(stateLabel('muted' as Alert['state'])).toBe('muted')
+  })
+})
+
+describe('definitionKey', () => {
+  it('is the same across a rename, a pause, a snooze or a new updated_at, and differs for any part of the definition', () => {
+    const a = alert({ template: 'event_count', fields: { event: 'signup' } })
+    const k = definitionKey(a)
+    expect(definitionKey({ ...a, name: 'x', paused: true, state: 'paused', snoozed_until: '2026-12-01T00:00:00Z', updated_at: '2026-11-26T09:00:00Z' })).toBe(k)
+    const changes: Partial<Alert>[] = [
+      { condition: { ...below, value: 0.04 } },
+      { window_days: 14 },
+      { min_volume: 10 },
+      { fields: { event: 'paid' } },
+      { template: undefined },
+      { query: { type: 'stat', event: 'paid' } },
+      { read: { metric: 'actors' } },
+      { where: [] },
+    ]
+    for (const c of changes) expect(definitionKey({ ...a, ...c })).not.toBe(k)
   })
 })
 

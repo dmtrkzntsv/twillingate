@@ -4,7 +4,7 @@ import LoadError from '@/components/projects/LoadError'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { definitionChanged, draftErrors, previewBody, type AlertDraft } from '@/lib/alert-draft'
-import { formatAlertValue, stateLabel } from '@/lib/alerts'
+import { definitionKey, formatAlertValue, stateLabel } from '@/lib/alerts'
 import { endpoints, type Alert, type AlertPreview } from '@/lib/api'
 import { alertPreviewQuery } from '@/lib/queries'
 
@@ -72,8 +72,8 @@ interface Props {
 /**
  * **Backtest**: how the saved alert would have fired over the past
  * (`preview_alert` with its id), read when the page opens and again once
- * the alert's `updated_at` moves (an edit here, elsewhere or by an agent); not for an
- * archived or a broken alert, which the page does not show it for. While
+ * its definition changes (an edit here, elsewhere or by an agent; not a
+ * rename, a pause or a snooze); not for an archived or a broken alert, which the page does not show it for. While
  * the draft changes the definition, **Preview changes** runs the draft
  * (once it has no errors) and shows that answer, **With your changes**,
  * under the saved one, for as long as the draft is the one it ran; a save,
@@ -82,7 +82,7 @@ interface Props {
 export default function AlertBacktest({ projectId, alert, draft }: Props) {
   const id = useId()
   const runnable = alert.archived_at === '' && alert.kind !== ''
-  const saved = useQuery({ ...alertPreviewQuery(projectId, alert.id, alert.updated_at), enabled: runnable })
+  const saved = useQuery({ ...alertPreviewQuery(projectId, alert.id, definitionKey(alert)), enabled: runnable })
   const changed = runnable && draft !== null && definitionChanged(alert, draft)
   const body = changed ? previewBody(alert, draft) : null
   const bodyKey = body ? JSON.stringify(body) : null

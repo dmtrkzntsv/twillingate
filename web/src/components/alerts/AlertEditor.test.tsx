@@ -116,6 +116,27 @@ describe('AlertEditor', () => {
     expect(preview.mock.calls.filter(([, body]) => 'id' in body)).toHaveLength(2)
   })
 
+  it('reads the saved backtest no more after a rename', async () => {
+    const a = alert({ id: 7 })
+    const { lists } = serveAlerts([a])
+    const preview = vi.mocked(endpoints.previewAlert)
+    const saved: Alert = { ...a, name: 'Sign-ups', updated_at: '2026-11-26T09:00:00Z' }
+    vi.spyOn(endpoints, 'updateAlert').mockImplementation(async () => {
+      lists.live = [saved]
+      return saved
+    })
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledWith(1, { id: 7 }))
+    await user.clear(f.getByLabelText('Name'))
+    await user.type(f.getByLabelText('Name'), 'Sign-ups')
+    await user.click(f.getByRole('button', { name: 'Save' }))
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalledWith('Saved'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(preview.mock.calls.filter(([, body]) => 'id' in body)).toHaveLength(1)
+  })
+
   it('reads the saved backtest again after a save that kept updated_at (two edits within a second)', async () => {
     const a = alert({ id: 7 })
     const { lists } = serveAlerts([a])

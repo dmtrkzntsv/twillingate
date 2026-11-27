@@ -121,6 +121,11 @@ export function alertSource(a: Alert): AlertSource {
   return { query: a.query, read: a.read }
 }
 
+/** An alert's definition as one string, in a fixed order: its source (`query`, `read`, `where`, `template`, `fields`), condition, window and minimum volume. The same for the same definition whatever else changed (a rename, a pause, a snooze, a restore), so what is read of the definition alone (its backtest) is keyed by it. */
+export function definitionKey(a: Alert): string {
+  return JSON.stringify([a.query, a.read, a.where ?? null, a.condition, a.window_days, a.min_volume, a.template ?? null, a.fields ?? null])
+}
+
 /** Whether `min_volume` means anything to the server: not for silence, and not for a threshold on a stat with no volume metric (its value is what is watched). */
 export function takesMinVolume(kind: string, condition: AlertCondition, read: AlertRead): boolean {
   if (kind === 'funnel') return true

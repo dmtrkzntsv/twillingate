@@ -1,12 +1,10 @@
 import { useId, useState, type FormEvent } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AlertActions } from '@/hooks/use-alert-actions'
-import { definitionChanged, draftErrors, draftOf, patchOf, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
+import { draftErrors, draftOf, patchOf, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
 import { ApiError, type Alert } from '@/lib/api'
-import { alertPreviewsKey } from '@/lib/queries'
 import { toastError } from '@/lib/toast-error'
 import ConditionFields, { errorProps, Field } from './ConditionFields'
 import TemplateFields from './TemplateFields'
@@ -43,7 +41,6 @@ interface Props {
  */
 export default function AlertEditor({ projectId, alert, actions, draft, onEdit, onReset }: Props) {
   const id = useId()
-  const client = useQueryClient()
   const [refusal, setRefusal] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const errors = draftErrors(alert, draft)
@@ -59,17 +56,14 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
     if (!changed || invalid || actions.pending) return
     setRefusal(null)
     setWarnings([])
-    const definition = definitionChanged(alert, draft)
     const saved = await actions.update(alert.id, patch, {
       onRefusal: (err) => (err instanceof ApiError ? setRefusal(err.message) : toastError(err)),
     })
     if (!saved) return
     toast.success('Saved')
     setWarnings(saved.warnings ?? [])
+    // The backtest is keyed by the definition: a new one is read once, a rename none.
     onReset()
-    // The saved backtest is of the old definition. A new updated_at keys a
-    // fresh one already; one the same (two edits within a second) does not.
-    if (definition && saved.updated_at === alert.updated_at) void client.invalidateQueries({ queryKey: alertPreviewsKey(projectId, alert.id) })
   }
 
   const discard = () => {

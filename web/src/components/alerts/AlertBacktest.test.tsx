@@ -60,18 +60,40 @@ describe('AlertBacktest', () => {
     expect(await screen.findByText('Would have fired 1 time in the last 60 days')).toBeInTheDocument()
   })
 
-  it('runs the saved backtest again once the alert was edited elsewhere (a new updated_at)', async () => {
+  it('runs the saved backtest again once the definition was edited elsewhere', async () => {
     const preview = vi.spyOn(endpoints, 'previewAlert').mockResolvedValueOnce(ninetyDays()).mockResolvedValue({ ...ninetyDays(), fired: 4 })
     const a = alert({ id: 7 })
     const { client, rerender } = renderWithProviders(<AlertBacktest projectId={1} alert={a} draft={null} />)
     await screen.findByText('Would have fired 2 times in the last 90 days')
     rerender(
       <QueryClientProvider client={client}>
-        <AlertBacktest projectId={1} alert={{ ...a, updated_at: '2026-11-26T09:00:00Z' }} draft={null} />
+        <AlertBacktest projectId={1} alert={{ ...a, window_days: 7, updated_at: '2026-11-26T09:00:00Z' }} draft={null} />
       </QueryClientProvider>
     )
     expect(await screen.findByText('Would have fired 4 times in the last 90 days')).toBeInTheDocument()
     expect(preview).toHaveBeenCalledTimes(2)
+  })
+
+  it('reads the saved backtest no more for an edit that leaves the definition (a rename, a pause, a snooze)', async () => {
+    const preview = vi.spyOn(endpoints, 'previewAlert').mockResolvedValue(ninetyDays())
+    const a = alert({ id: 7 })
+    const { client, rerender } = renderWithProviders(<AlertBacktest projectId={1} alert={a} draft={null} />)
+    await screen.findByText('Would have fired 2 times in the last 90 days')
+    const edits: Partial<typeof a>[] = [
+      { name: 'Sign-ups', updated_at: '2026-11-26T09:00:00Z' },
+      { paused: true, state: 'paused', updated_at: '2026-11-26T09:01:00Z' },
+      { snoozed_until: '2026-11-27T09:00:00Z', state: 'snoozed', updated_at: '2026-11-26T09:02:00Z' },
+    ]
+    for (const e of edits) {
+      rerender(
+        <QueryClientProvider client={client}>
+          <AlertBacktest projectId={1} alert={{ ...a, ...e }} draft={null} />
+        </QueryClientProvider>
+      )
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    expect(screen.getByText('Would have fired 2 times in the last 90 days')).toBeInTheDocument()
+    expect(preview).toHaveBeenCalledTimes(1)
   })
 
   it("lists a silence alert's gaps in local time", async () => {
