@@ -67,8 +67,9 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
     toast.success('Saved')
     setWarnings(saved.warnings ?? [])
     onReset()
-    // The saved backtest is of the old definition (the new updated_at reads it afresh too).
-    if (definition) void client.invalidateQueries({ queryKey: alertPreviewsKey(projectId, alert.id) })
+    // The saved backtest is of the old definition. A new updated_at keys a
+    // fresh one already; one the same (two edits within a second) does not.
+    if (definition && saved.updated_at === alert.updated_at) void client.invalidateQueries({ queryKey: alertPreviewsKey(projectId, alert.id) })
   }
 
   const discard = () => {

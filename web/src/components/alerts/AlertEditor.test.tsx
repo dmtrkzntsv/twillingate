@@ -95,6 +95,46 @@ describe('AlertEditor', () => {
     expect(update).toHaveBeenCalledTimes(1)
   })
 
+  it('reads the saved backtest once after a save, of the new definition', async () => {
+    const a = alert({ id: 7 })
+    const { lists } = serveAlerts([a])
+    const preview = vi.mocked(endpoints.previewAlert)
+    const saved: Alert = { ...a, condition: { type: 'threshold', op: 'below', value: 40 }, updated_at: '2026-11-26T09:00:00Z' }
+    vi.spyOn(endpoints, 'updateAlert').mockImplementation(async () => {
+      lists.live = [saved]
+      return saved
+    })
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledWith(1, { id: 7 }))
+    await user.clear(f.getByLabelText('Threshold'))
+    await user.type(f.getByLabelText('Threshold'), '40')
+    await user.click(f.getByRole('button', { name: 'Save' }))
+    await vi.waitFor(() => expect(toast.success).toHaveBeenCalledWith('Saved'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(preview.mock.calls.filter(([, body]) => 'id' in body)).toHaveLength(2)
+  })
+
+  it('reads the saved backtest again after a save that kept updated_at (two edits within a second)', async () => {
+    const a = alert({ id: 7 })
+    const { lists } = serveAlerts([a])
+    const preview = vi.mocked(endpoints.previewAlert)
+    const saved: Alert = { ...a, condition: { type: 'threshold', op: 'below', value: 40 } }
+    vi.spyOn(endpoints, 'updateAlert').mockImplementation(async () => {
+      lists.live = [saved]
+      return saved
+    })
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledWith(1, { id: 7 }))
+    await user.clear(f.getByLabelText('Threshold'))
+    await user.type(f.getByLabelText('Threshold'), '40')
+    await user.click(f.getByRole('button', { name: 'Save' }))
+    await vi.waitFor(() => expect(preview.mock.calls.filter(([, body]) => 'id' in body)).toHaveLength(2))
+  })
+
   it('shows an error under its field and keeps Save disabled', async () => {
     serveAlerts([alert({ id: 7 })])
     const user = userEvent.setup()

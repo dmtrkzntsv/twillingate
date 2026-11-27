@@ -8,7 +8,7 @@ import type { Alert } from '@/lib/api'
 import { dashboardsQuery, eventNamesQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 
-/** The event a page view is stored under: the only one a path narrows. The event list leaves out `$` names, so it is offered on its own. */
+/** The event a page view is stored under: the only one a path narrows in event_count and no_events (a conversion step's path narrows any event). The event list leaves out `$` names, so it is offered on its own. */
 const PAGE_VIEW = '$page_view'
 
 type Template = NonNullable<Alert['template']>
