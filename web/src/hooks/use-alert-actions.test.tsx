@@ -101,18 +101,60 @@ describe('useAlertActions', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['alerts', 1] })
   })
 
-  it('forgets an asked check once an answer says none is pending (a pause or an archive drops it)', async () => {
+  it.each<[string, (r: ReturnType<typeof useAlertActions>) => Promise<unknown>]>([
+    ['a pause', (r) => r.pause(7)],
+    ['a snooze', (r) => r.snooze(7, '1h')],
+    ['an archive', (r) => r.archive(7)],
+  ])('forgets an asked check that %s drops', async (_what, drop) => {
     vi.spyOn(endpoints, 'checkAlert').mockResolvedValue(alert({ id: 7, check_pending: true }))
     vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(alert({ id: 7, paused: true, state: 'paused' }))
+    vi.spyOn(endpoints, 'archiveAlert').mockResolvedValue(alert({ id: 7, archived_at: '2026-11-26T10:00:00Z' }))
     const { result } = setup({ live: list(alert({ id: 7 })) })
     await act(async () => {
       await result.current.check(7)
     })
     expect(result.current.asked(7)).toBe(true)
     await act(async () => {
-      await result.current.pause(7)
+      await drop(result.current)
     })
     expect(result.current.asked(7)).toBe(false)
+  })
+
+  it("marks nothing asked for a rename whose answer shows a check asked for elsewhere", async () => {
+    vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(alert({ id: 7, name: 'Renamed', check_pending: true }))
+    const { result } = setup({ live: list(alert({ id: 7 })) })
+    await act(async () => {
+      await result.current.update(7, { name: 'Renamed' })
+    })
+    expect(result.current.asked(7)).toBe(false)
+  })
+
+  it.each<[string, (r: ReturnType<typeof useAlertActions>) => Promise<unknown>]>([
+    ['a resume', (r) => r.resume(7)],
+    ['a wake', (r) => r.wake(7)],
+    ['a new condition', (r) => r.update(7, { condition: { type: 'threshold', op: 'below', value: 40 } })],
+    ['new template fields', (r) => r.update(7, { fields: { event: 'paid' } })],
+    ['a new minimum volume', (r) => r.update(7, { min_volume: 10 })],
+  ])('marks a check asked by %s, which asks for one', async (_what, ask) => {
+    vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(alert({ id: 7, check_pending: true }))
+    const { result } = setup({ live: list(alert({ id: 7 })) })
+    await act(async () => {
+      await ask(result.current)
+    })
+    expect(result.current.asked(7)).toBe(true)
+  })
+
+  it('keeps an asked check across a save whose answer has none pending, for the page to settle', async () => {
+    vi.spyOn(endpoints, 'checkAlert').mockResolvedValue(alert({ id: 7, check_pending: true }))
+    vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(alert({ id: 7, name: 'Renamed' }))
+    const { result } = setup({ live: list(alert({ id: 7 })) })
+    await act(async () => {
+      await result.current.check(7)
+    })
+    await act(async () => {
+      await result.current.update(7, { name: 'Renamed' })
+    })
+    expect(result.current.asked(7)).toBe(true)
   })
 
   it('toasts a refusal, resolves null and refetches the lists, which the refusal says are stale', async () => {

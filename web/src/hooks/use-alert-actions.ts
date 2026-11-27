@@ -15,17 +15,29 @@ export interface AlertActions {
   archive(id: number): Promise<Alert | null>
   restore(id: number): Promise<Alert | null>
   /**
-   * Saves a patch; a new definition asks for a check, which the answer's
-   * `check_pending` says. With `onRefusal`, a refusal (an ApiError when the
-   * server answered) goes to it instead of a toast, so a form can show it.
+   * Saves a patch; a new definition (condition, window, minimum volume or
+   * template fields) asks for a check, which the answer's `check_pending`
+   * says. With `onRefusal`, a refusal (an ApiError when the server
+   * answered) goes to it instead of a toast, so a form can show it.
    */
   update(id: number, patch: AlertPatch, opts?: { onRefusal?: (err: unknown) => void }): Promise<Alert | null>
-  /** Whether this hook asked for alert `id`'s pending check (Check now, or a save that asked for one) and has not been told it is done. */
+  /** Whether this hook asked for alert `id`'s pending check (Check now, or a save that asks for one: a new definition, a resume, a wake) and has not been told it is done or dropped (a pause, a snooze or an archive from here). */
   asked(id: number): boolean
   /** Forgets the check asked for alert `id`, once its result has been said. */
   forget(id: number): void
   /** True while an action runs; buttons wait on it. */
   pending: boolean
+}
+
+/** What a write does to a check: asks for one, drops a pending one unrun, or neither. */
+type CheckEffect = 'asks' | 'drops' | 'none'
+
+/** What a save of `patch` does to a check: a new definition (condition, window, minimum volume or template fields), a resume or a wake asks for one; a pause or a snooze drops a pending one; a rename does neither. */
+function patchCheckEffect(patch: AlertPatch): CheckEffect {
+  const definition = patch.condition !== undefined || patch.window_days !== undefined || patch.min_volume !== undefined || patch.fields !== undefined
+  if (definition || patch.paused === false || patch.snoozed_until === null) return 'asks'
+  if (patch.paused === true || (typeof patch.snoozed_until === 'string' && patch.snoozed_until !== '')) return 'drops'
+  return 'none'
 }
 
 /** `alerts` with `a` in place of the alert with its id, or added in name order (the server's) when it is not there. */
@@ -64,7 +76,7 @@ export function useAlertActions(projectId: number): AlertActions {
   )
 
   const run = useCallback(
-    async (fn: () => Promise<Alert>, asks = false, onRefusal?: (err: unknown) => void): Promise<Alert | null> => {
+    async (fn: () => Promise<Alert>, check: CheckEffect = 'none', onRefusal?: (err: unknown) => void): Promise<Alert | null> => {
       setPending(true)
       try {
         // A list GET in flight began before this write: its answer, landing
@@ -73,12 +85,14 @@ export function useAlertActions(projectId: number): AlertActions {
         await client.cancelQueries({ queryKey: ['alerts', projectId] })
         const a = await fn()
         // Marked before the cache shows the pending check, so the page never
-        // sees it pending without knowing it asked.
-        if (asks && a.check_pending) askedIds.current.add(a.id)
-        // An answer with none pending ended any check asked for: a pause, a
-        // snooze or an archive drops the request unrun, and its end is no
-        // check's result to report.
-        if (!a.check_pending) askedIds.current.delete(a.id)
+        // sees it pending without knowing it asked; a write that asks none
+        // marks nothing, even when the answer shows one asked elsewhere.
+        if (check === 'asks' && a.check_pending) askedIds.current.add(a.id)
+        // A pause, a snooze or an archive drops the request unrun, and its
+        // end is no check's result to report. Any other answer with none
+        // pending leaves the mark to the page, which forgets it quietly when
+        // the check ends unserved.
+        else if (check === 'drops') askedIds.current.delete(a.id)
         write(a)
         void client.invalidateQueries({ queryKey: ['alerts', projectId] })
         return a
@@ -99,16 +113,19 @@ export function useAlertActions(projectId: number): AlertActions {
   const asked = useCallback((id: number) => askedIds.current.has(id), [])
   const forget = useCallback((id: number) => void askedIds.current.delete(id), [])
 
+  const save = (id: number, patch: AlertPatch, onRefusal?: (err: unknown) => void) =>
+    run(() => endpoints.updateAlert(projectId, id, patch), patchCheckEffect(patch), onRefusal)
+
   return {
     pending,
-    check: (id) => run(() => endpoints.checkAlert(projectId, id), true),
-    pause: (id) => run(() => endpoints.updateAlert(projectId, id, { paused: true })),
-    resume: (id) => run(() => endpoints.updateAlert(projectId, id, { paused: false })),
-    snooze: (id, choice) => run(() => endpoints.updateAlert(projectId, id, { snoozed_until: snoozeUntil(new Date(), choice) })),
-    wake: (id) => run(() => endpoints.updateAlert(projectId, id, { snoozed_until: null })),
-    archive: (id) => run(() => endpoints.archiveAlert(projectId, id)),
+    check: (id) => run(() => endpoints.checkAlert(projectId, id), 'asks'),
+    pause: (id) => save(id, { paused: true }),
+    resume: (id) => save(id, { paused: false }),
+    snooze: (id, choice) => save(id, { snoozed_until: snoozeUntil(new Date(), choice) }),
+    wake: (id) => save(id, { snoozed_until: null }),
+    archive: (id) => run(() => endpoints.archiveAlert(projectId, id), 'drops'),
     restore: (id) => run(() => endpoints.restoreAlert(projectId, id)),
-    update: (id, patch, opts) => run(() => endpoints.updateAlert(projectId, id, patch), true, opts?.onRefusal),
+    update: (id, patch, opts) => save(id, patch, opts?.onRefusal),
     asked,
     forget,
   }
