@@ -275,6 +275,22 @@ describe('TemplateFields', () => {
     expect(f.getByRole('button', { name: 'Save' })).toBeDisabled()
   })
 
+  it("says the event names did not load, with Retry, and keeps the saved event and $page_view to choose", async () => {
+    vi.mocked(endpoints.eventNames).mockRejectedValueOnce(new ApiError(500, 'the event files could not be read', 'internal'))
+    serveAlerts([alert({ id: 7, template: 'event_count', fields: { event: 'legacy_signup' } })])
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    expect(await f.findByRole('alert')).toHaveTextContent("Couldn't load the event names. the event files could not be read")
+    const event = f.getByLabelText('Event')
+    expect(event).toHaveValue('legacy_signup')
+    expect(within(event).getAllByRole('option').map((o) => o.textContent)).toEqual(['$page_view', 'legacy_signup'])
+    await user.click(f.getByRole('button', { name: 'Retry' }))
+    await vi.waitFor(() => expect(within(event).getByRole('option', { name: 'paid' })).toBeInTheDocument())
+    expect(f.queryByRole('alert')).toBeNull()
+    expect(event).toHaveValue('legacy_signup')
+  })
+
   it('offers a path only for $page_view, and drops it when the event changes', async () => {
     const a = alert({ id: 7, template: 'event_count', fields: { event: 'signup' } })
     serveAlerts([a])

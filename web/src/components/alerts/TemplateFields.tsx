@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import LoadError from '@/components/projects/LoadError'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
@@ -57,7 +58,8 @@ interface Props {
  * event changes away from it, and under both of a conversion's events
  * always, kept across a change of event; and the people a template counts,
  * its default shown when the field is absent. An empty field is an absent
- * one.
+ * one. When the event names fail to load, it says so, with Retry, above
+ * pickers that still offer `$page_view` and the fields' own values.
  */
 export default function TemplateFields({ projectId, template, fields, onChange, error }: Props) {
   const id = useId()
@@ -68,6 +70,7 @@ export default function TemplateFields({ projectId, template, fields, onChange, 
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-3">
+      {names.error && !names.data && <LoadError what="the event names" error={names.error} onRetry={() => void names.refetch()} />}
       {EVENT_FIELDS[template].map((f) => {
         const value = fields[f.key] ?? ''
         const choices = [PAGE_VIEW, ...listed]
