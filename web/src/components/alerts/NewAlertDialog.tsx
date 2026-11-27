@@ -68,6 +68,7 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
       setSuggested('')
       setTouched(new Set())
     }
+    setNameRefusal('')
     setStep(2)
   }
 
@@ -90,13 +91,17 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
     if (!blank || !draft || !ready) return
     // Only now: the draft is valid, which the suggestion needs.
     const name = suggestName(blank, draft)
-    if (draft.name.trim() === '' || draft.name === suggested) edit({ name })
+    if (draft.name.trim() === '' || draft.name === suggested) {
+      edit({ name })
+      setNameRefusal('')
+    }
     setSuggested(name)
     setStep(3)
   }
 
   const back = () => {
     setRefusal('')
+    setNameRefusal('')
     setStep(step === 3 ? 2 : 1)
   }
 
@@ -177,25 +182,27 @@ function Wizard({ projectId, actions, onClose }: { projectId: number; actions: A
       )}
       {step === 3 && blank && draft && (
         <form id={`${id}-name-form`} onSubmit={(e) => void create(e)} className="grid min-w-0 grid-cols-1 gap-4">
-          <Backtest projectId={projectId} blank={blank} draft={draft} />
-          <Field id={`${id}-name`} label="Name" error={nameError}>
-            <Input
-              id={`${id}-name`}
-              value={draft.name}
-              autoComplete="off"
-              onChange={(e) => {
-                edit({ name: e.target.value })
-                setNameRefusal('')
-                setRefusal('')
-              }}
-              {...errorProps(`${id}-name`, nameError)}
-            />
-          </Field>
-          {refusal && (
-            <p role="alert" className="text-sm break-words text-destructive">
-              {refusal}
-            </p>
-          )}
+          <fieldset disabled={actions.pending} className="contents">
+            <Backtest projectId={projectId} blank={blank} draft={draft} />
+            <Field id={`${id}-name`} label="Name" error={nameError}>
+              <Input
+                id={`${id}-name`}
+                value={draft.name}
+                autoComplete="off"
+                onChange={(e) => {
+                  edit({ name: e.target.value })
+                  setNameRefusal('')
+                  setRefusal('')
+                }}
+                {...errorProps(`${id}-name`, nameError)}
+              />
+            </Field>
+            {refusal && (
+              <p role="alert" className="text-sm break-words text-destructive">
+                {refusal}
+              </p>
+            )}
+          </fieldset>
         </form>
       )}
       <DialogFooter>

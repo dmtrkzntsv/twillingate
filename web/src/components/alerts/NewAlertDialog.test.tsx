@@ -126,6 +126,8 @@ describe('NewAlertDialog', () => {
 
     await user.dblClick(d.getByRole('button', { name: 'Create alert' }))
     expect(d.getByRole('button', { name: 'Create alert' })).toBeDisabled()
+    expect(d.getByLabelText('Name')).toBeDisabled()
+
     live = [MADE]
     answer(MADE)
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/projects/1/alerts/42?range=7d'))
@@ -263,6 +265,23 @@ describe('NewAlertDialog', () => {
     await user.click(d.getByRole('button', { name: 'Back' }))
     expect(d.getByLabelText('Event')).toHaveValue('signup')
     expect(d.getByLabelText('Threshold')).toHaveValue('5')
+  })
+
+  it('drops a refused name once Back and a change give the new definition its own suggested name', async () => {
+    vi.spyOn(endpoints, 'createAlert').mockRejectedValue(new ApiError(409, 'a live alert named Count of signup below 5 over 1 day exists', 'conflict'))
+    const user = userEvent.setup()
+    renderList()
+    const d = await toStepThree(user)
+    await user.click(d.getByRole('button', { name: 'Create alert' }))
+    await d.findByText('a live alert named Count of signup below 5 over 1 day exists')
+
+    await user.click(d.getByRole('button', { name: 'Back' }))
+    await user.selectOptions(d.getByLabelText('Event'), 'paid')
+    await user.click(d.getByRole('button', { name: 'Next' }))
+    const name = d.getByLabelText('Name')
+    expect(name).toHaveValue('Count of paid below 5 over 1 day')
+    expect(d.queryByText(/a live alert named/)).toBeNull()
+    expect(name).not.toHaveAttribute('aria-invalid', 'true')
   })
 
   it('says any other refusal under the step, until the name changes', async () => {
