@@ -37,7 +37,8 @@ interface Props {
  * live alert has the name, or another edit landed first) is said under the
  * form, the edit kept, and the alerts are read again; the events the
  * project never sent come back from a save as `Never sent yet` lines.
- * Discard puts the saved values back.
+ * Discard puts the saved values back. The inputs are held while a save is
+ * on its way, since its end puts the saved values back.
  */
 export default function AlertEditor({ projectId, alert, actions, draft, onEdit, onReset }: Props) {
   const id = useId()
@@ -80,13 +81,16 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
       <h3 id={`${id}-title`} className="text-base font-semibold">
         Alert settings
       </h3>
-      <Field id={`${id}-name`} label="Name" error={errors.name}>
-        <Input id={`${id}-name`} value={draft.name} onChange={(e) => onEdit({ name: e.target.value })} {...errorProps(`${id}-name`, errors.name)} />
-      </Field>
-      {!broken && alert.template && (
-        <TemplateFields projectId={projectId} template={alert.template} fields={draft.fields} onChange={(fields) => onEdit({ fields })} error={errors.fields} />
-      )}
-      {!broken && <ConditionFields alert={alert} draft={draft} errors={errors} onChange={onEdit} />}
+      {/* Held while a save (or any action) is on its way: what was typed meanwhile would not be sent, and the save's end puts the saved values back. */}
+      <fieldset disabled={actions.pending} className="contents">
+        <Field id={`${id}-name`} label="Name" error={errors.name}>
+          <Input id={`${id}-name`} value={draft.name} onChange={(e) => onEdit({ name: e.target.value })} {...errorProps(`${id}-name`, errors.name)} />
+        </Field>
+        {!broken && alert.template && (
+          <TemplateFields projectId={projectId} template={alert.template} fields={draft.fields} onChange={(fields) => onEdit({ fields })} error={errors.fields} />
+        )}
+        {!broken && <ConditionFields alert={alert} draft={draft} errors={errors} onChange={onEdit} />}
+      </fieldset>
       {refusal && (
         <p role="alert" className="text-sm break-words text-destructive">
           {refusal}

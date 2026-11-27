@@ -95,6 +95,27 @@ describe('AlertEditor', () => {
     expect(update).toHaveBeenCalledTimes(1)
   })
 
+  it('holds the inputs while a save is on its way, and lets them go once it answered', async () => {
+    const a = alert({ id: 7 })
+    serveAlerts([a])
+    let answer: (x: Alert) => void = () => {}
+    vi.spyOn(endpoints, 'updateAlert').mockReturnValue(new Promise<Alert>((r) => (answer = r)))
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    await user.clear(f.getByLabelText('Threshold'))
+    await user.type(f.getByLabelText('Threshold'), '40')
+    await user.click(f.getByRole('button', { name: 'Save' }))
+    await vi.waitFor(() => expect(f.getByLabelText('Threshold')).toBeDisabled())
+    expect(f.getByLabelText('Name')).toBeDisabled()
+    expect(f.getByLabelText('Condition')).toBeDisabled()
+    await user.type(f.getByLabelText('Name'), ' typed meanwhile')
+    expect(f.getByLabelText('Name')).toHaveValue('Signups')
+    answer({ ...a, condition: { type: 'threshold', op: 'below', value: 40 } })
+    await vi.waitFor(() => expect(f.getByLabelText('Threshold')).toBeEnabled())
+    expect(f.getByLabelText('Name')).toBeEnabled()
+  })
+
   it('reads the saved backtest once after a save, of the new definition', async () => {
     const a = alert({ id: 7 })
     const { lists } = serveAlerts([a])
