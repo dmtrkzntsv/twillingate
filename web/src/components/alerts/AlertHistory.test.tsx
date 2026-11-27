@@ -148,4 +148,28 @@ describe('AlertHistory', () => {
     rerender(tree('2026-11-25T06:01:00Z'))
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(2))
   })
+
+  it('keeps the cached rows and says the latest history did not load when reading it again fails, with Retry', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'alertHistory')
+      .mockResolvedValueOnce({ evaluations: [evaluation({ id: 1, value: 10 })] })
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ evaluations: [evaluation({ id: 2, value: 30 })] })
+    const client = testClient()
+    const tree = (at: string) => (
+      <QueryClientProvider client={client}>
+        <AlertHistory projectId={3} alert={alert({ id: 7, last_evaluated_at: at })} />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(tree('2026-11-25T06:00:00Z'))
+    await screen.findByText('10')
+    rerender(tree('2026-11-25T06:01:00Z'))
+    expect(await screen.findByText(/the latest history/)).toBeInTheDocument()
+    expect(screen.getByText(/boom/)).toBeInTheDocument()
+    expect(screen.getByText('10')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('30')).toBeInTheDocument()
+    expect(screen.queryByText(/the latest history/)).not.toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(3)
+  })
 })

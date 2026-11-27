@@ -61,6 +61,7 @@ export default function AlertHistory({ projectId, alert }: { projectId: number; 
         <p className="text-sm text-muted-foreground">Not evaluated yet</p>
       ) : (
         <>
+          {history.isRefetchError && <LoadError what="the latest history" error={history.error!} onRetry={() => void history.refetch()} />}
           <Table>
             <TableHeader>
               <TableRow>
