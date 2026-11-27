@@ -100,6 +100,29 @@ describe('AlertActions', () => {
     }
   })
 
+  it('says nothing of a check that a pause cancelled', async () => {
+    const { lists } = serveAlerts([alert({ id: 7 })])
+    vi.spyOn(endpoints, 'checkAlert').mockImplementation(async () => {
+      const pending = alert({ id: 7, check_pending: true, check_requested_at: '2026-11-26T10:00:00Z' })
+      lists.live = [pending]
+      return pending
+    })
+    // The server drops the check request with the pause: the answer is no longer pending.
+    vi.spyOn(endpoints, 'updateAlert').mockImplementation(async () => {
+      const paused = alert({ id: 7, paused: true, state: 'paused' })
+      lists.live = [paused]
+      return paused
+    })
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Check now' }))
+    await screen.findByRole('button', { name: 'Checking…' })
+    await user.click(screen.getByRole('button', { name: 'Pause' }))
+    expect(await screen.findByRole('button', { name: 'Resume' })).toBeInTheDocument()
+    await vi.waitFor(() => expect(endpoints.alerts).toHaveBeenCalledTimes(3))
+    expect(toast).not.toHaveBeenCalled()
+  })
+
   it('snoozes for a day from now', async () => {
     const { update } = serveOne(alert({ id: 7 }))
     const user = userEvent.setup()

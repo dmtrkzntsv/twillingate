@@ -14,8 +14,12 @@ export interface AlertActions {
   wake(id: number): Promise<Alert | null>
   archive(id: number): Promise<Alert | null>
   restore(id: number): Promise<Alert | null>
-  /** Saves a patch; a new definition asks for a check, which the answer's `check_pending` says. */
-  update(id: number, patch: AlertPatch): Promise<Alert | null>
+  /**
+   * Saves a patch; a new definition asks for a check, which the answer's
+   * `check_pending` says. With `onRefusal`, a refusal (an ApiError when the
+   * server answered) goes to it instead of a toast, so a form can show it.
+   */
+  update(id: number, patch: AlertPatch, opts?: { onRefusal?: (err: unknown) => void }): Promise<Alert | null>
   /** Whether this hook asked for alert `id`'s pending check (Check now, or a save that asked for one) and has not been told it is done. */
   asked(id: number): boolean
   /** Forgets the check asked for alert `id`, once its result has been said. */
@@ -36,8 +40,9 @@ function upsert(alerts: Alert[], a: Alert): Alert[] {
  * archive, restore or check route. The answered alert goes into the list it
  * now belongs to (the archived one once archived) and out of the other,
  * each only where that list is already loaded, so the page follows at once;
- * then the project's alert lists refetch. A failure toasts its message,
- * refetches the lists too, and resolves null instead of throwing. The page that shows the alert calls
+ * then the project's alert lists refetch. A failure toasts its message
+ * (or goes to a save's `onRefusal`), refetches the lists too, and resolves
+ * null instead of throwing. The page that shows the alert calls
  * this once and hands it down, so a check asked for anywhere on it is the
  * page's to report when it is done (`asked`).
  */
@@ -59,7 +64,7 @@ export function useAlertActions(projectId: number): AlertActions {
   )
 
   const run = useCallback(
-    async (fn: () => Promise<Alert>, asks = false): Promise<Alert | null> => {
+    async (fn: () => Promise<Alert>, asks = false, onRefusal?: (err: unknown) => void): Promise<Alert | null> => {
       setPending(true)
       try {
         // A list GET in flight began before this write: its answer, landing
@@ -70,11 +75,16 @@ export function useAlertActions(projectId: number): AlertActions {
         // Marked before the cache shows the pending check, so the page never
         // sees it pending without knowing it asked.
         if (asks && a.check_pending) askedIds.current.add(a.id)
+        // An answer with none pending ended any check asked for: a pause, a
+        // snooze or an archive drops the request unrun, and its end is no
+        // check's result to report.
+        if (!a.check_pending) askedIds.current.delete(a.id)
         write(a)
         void client.invalidateQueries({ queryKey: ['alerts', projectId] })
         return a
       } catch (err) {
-        toastError(err)
+        if (onRefusal) onRefusal(err)
+        else toastError(err)
         // A refusal mostly means the page is stale (paused elsewhere, another
         // edit landed first): read the lists again, so it shows what is so.
         void client.invalidateQueries({ queryKey: ['alerts', projectId] })
@@ -98,7 +108,7 @@ export function useAlertActions(projectId: number): AlertActions {
     wake: (id) => run(() => endpoints.updateAlert(projectId, id, { snoozed_until: null })),
     archive: (id) => run(() => endpoints.archiveAlert(projectId, id)),
     restore: (id) => run(() => endpoints.restoreAlert(projectId, id)),
-    update: (id, patch) => run(() => endpoints.updateAlert(projectId, id, patch), true),
+    update: (id, patch, opts) => run(() => endpoints.updateAlert(projectId, id, patch), true, opts?.onRefusal),
     asked,
     forget,
   }

@@ -83,6 +83,38 @@ describe('useAlertActions', () => {
     expect(both.client.getQueryData<AlertsResponse>(ARCHIVED)?.alerts.map((a) => a.id)).toEqual([2, 7, 4])
   })
 
+  it("hands a save's refusal to onRefusal instead of toasting it, and still refetches the lists", async () => {
+    vi.spyOn(endpoints, 'updateAlert').mockRejectedValue(new ApiError(409, 'a live alert is named Signups', 'conflict'))
+    const { client, result } = setup({ live: list(alert({ id: 7 })) })
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const onRefusal = vi.fn()
+    let answer: unknown = 'unset'
+    await act(async () => {
+      answer = await result.current.update(7, { name: 'Signups' }, { onRefusal })
+    })
+    expect(answer).toBeNull()
+    expect(onRefusal).toHaveBeenCalledTimes(1)
+    const err = onRefusal.mock.calls[0][0]
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err).toMatchObject({ status: 409, message: 'a live alert is named Signups' })
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['alerts', 1] })
+  })
+
+  it('forgets an asked check once an answer says none is pending (a pause or an archive drops it)', async () => {
+    vi.spyOn(endpoints, 'checkAlert').mockResolvedValue(alert({ id: 7, check_pending: true }))
+    vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(alert({ id: 7, paused: true, state: 'paused' }))
+    const { result } = setup({ live: list(alert({ id: 7 })) })
+    await act(async () => {
+      await result.current.check(7)
+    })
+    expect(result.current.asked(7)).toBe(true)
+    await act(async () => {
+      await result.current.pause(7)
+    })
+    expect(result.current.asked(7)).toBe(false)
+  })
+
   it('toasts a refusal, resolves null and refetches the lists, which the refusal says are stale', async () => {
     vi.spyOn(endpoints, 'updateAlert').mockRejectedValue(new ApiError(409, 'the alert changed meanwhile', 'conflict'))
     const { client, result } = setup({ live: list(alert({ id: 7 })) })
