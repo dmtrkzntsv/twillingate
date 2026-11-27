@@ -70,12 +70,14 @@ function pollWhilePending(id: number) {
 
 /**
  * Toasts `Checked: <state>` when the alert's pending check clears, if this
- * page asked for it (`actions.asked`) and it was served (`last_evaluated_at`
- * set again); a check asked for elsewhere, one pending when the page
- * opened, or one dropped unrun (a pause, a snooze or an archive from
- * another client, which leave the alert never evaluated) clears quietly.
+ * page asked for it (`actions.asked`, the request time still the alert's
+ * `check_requested_at`) and it was served (`last_evaluated_at` set again); a
+ * check asked for elsewhere (a request another client made since this
+ * page's included), one pending when the page opened, or one dropped unrun
+ * (a pause, a snooze or an archive from another client, which leave the
+ * alert never evaluated) clears quietly.
  */
-function useCheckedToast(alert: Alert | undefined, asked: (id: number) => boolean, forget: (id: number) => void) {
+function useCheckedToast(alert: Alert | undefined, asked: (id: number) => string | undefined, forget: (id: number) => void) {
   const wasPending = useRef(false)
   useEffect(() => {
     if (!alert) return
@@ -85,9 +87,10 @@ function useCheckedToast(alert: Alert | undefined, asked: (id: number) => boolea
     }
     if (!wasPending.current) return
     wasPending.current = false
-    if (!asked(alert.id)) return
+    const request = asked(alert.id)
+    if (request === undefined) return
     forget(alert.id)
-    if (alert.last_evaluated_at) toast(`Checked: ${stateLabel(alert.state)}`)
+    if (request === alert.check_requested_at && alert.last_evaluated_at) toast(`Checked: ${stateLabel(alert.state)}`)
   }, [alert, asked, forget])
 }
 

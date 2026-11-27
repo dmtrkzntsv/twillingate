@@ -21,8 +21,8 @@ export interface AlertActions {
    * answered) goes to it instead of a toast, so a form can show it.
    */
   update(id: number, patch: AlertPatch, opts?: { onRefusal?: (err: unknown) => void }): Promise<Alert | null>
-  /** Whether this hook asked for alert `id`'s pending check (Check now, or a save that asks for one: a new definition, a resume, a wake) and has not been told it is done or dropped (a pause, a snooze or an archive from here). */
-  asked(id: number): boolean
+  /** The `check_requested_at` of the check this hook asked for alert `id` (Check now, or a save that asks for one: a new definition, a resume, a wake), until it is told the check is done or dropped (a pause, a snooze or an archive from here); undefined when none. A check of another request time is not this hook's (another client asked for one since). */
+  asked(id: number): string | undefined
   /** Forgets the check asked for alert `id`, once its result has been said. */
   forget(id: number): void
   /** True while an action runs; buttons wait on it. */
@@ -61,7 +61,7 @@ function upsert(alerts: Alert[], a: Alert): Alert[] {
 export function useAlertActions(projectId: number): AlertActions {
   const client = useQueryClient()
   const [pending, setPending] = useState(false)
-  const askedIds = useRef(new Set<number>())
+  const askedIds = useRef(new Map<number, string>())
 
   const write = useCallback(
     (a: Alert) => {
@@ -84,10 +84,11 @@ export function useAlertActions(projectId: number): AlertActions {
         // check to none, which would stop the polling).
         await client.cancelQueries({ queryKey: ['alerts', projectId] })
         const a = await fn()
-        // Marked before the cache shows the pending check, so the page never
-        // sees it pending without knowing it asked; a write that asks none
-        // marks nothing, even when the answer shows one asked elsewhere.
-        if (check === 'asks' && a.check_pending) askedIds.current.add(a.id)
+        // Marked, with the request it answered, before the cache shows the
+        // pending check, so the page never sees it pending without knowing it
+        // asked; a write that asks none marks nothing, even when the answer
+        // shows one asked elsewhere.
+        if (check === 'asks' && a.check_pending) askedIds.current.set(a.id, a.check_requested_at)
         // A pause, a snooze or an archive drops the request unrun, and its
         // end is no check's result to report. Any other answer with none
         // pending leaves the mark to the page, which forgets it quietly when
@@ -110,7 +111,7 @@ export function useAlertActions(projectId: number): AlertActions {
     [client, projectId, write]
   )
 
-  const asked = useCallback((id: number) => askedIds.current.has(id), [])
+  const asked = useCallback((id: number) => askedIds.current.get(id), [])
   const forget = useCallback((id: number) => void askedIds.current.delete(id), [])
 
   const save = (id: number, patch: AlertPatch, onRefusal?: (err: unknown) => void) =>

@@ -109,11 +109,44 @@ describe('AlertActions', () => {
       await vi.advanceTimersByTimeAsync(2_100)
       expect(screen.getByRole('button', { name: 'Checking…' })).toBeInTheDocument()
       expect(toast).not.toHaveBeenCalled()
-      lists.live = [alert({ id: 7, state: 'breached' })]
+      // Served: the request time stays, last_evaluated_at moves.
+      lists.live = [alert({ id: 7, state: 'breached', check_requested_at: '2026-11-26T10:00:00Z' })]
       await vi.advanceTimersByTimeAsync(2_100)
       expect(await screen.findByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled')
       expect(toast).toHaveBeenCalledTimes(1)
       expect(toast).toHaveBeenCalledWith('Checked: Breached')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('says nothing of a check another client asked for in place of this one between two polls, and forgets this one', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const { lists } = serveAlerts([alert({ id: 7 })])
+      vi.spyOn(endpoints, 'checkAlert').mockImplementation(async () => {
+        const pending = alert({ id: 7, check_pending: true, check_requested_at: '2026-11-26T10:00:00Z', last_evaluated_at: '' })
+        lists.live = [pending]
+        return pending
+      })
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTimeAsync })
+      const { client } = renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Check now' }))
+      await screen.findByRole('button', { name: 'Checking…' })
+      // Between two polls this check was dropped (paused and resumed
+      // elsewhere) and another asked for; the poll sees that one served.
+      lists.live = [alert({ id: 7, state: 'breached', check_requested_at: '2026-11-26T10:00:30Z', last_evaluated_at: '2026-11-26T10:01:00Z' })]
+      await vi.advanceTimersByTimeAsync(2_100)
+      expect(await screen.findByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled')
+      expect(toast).not.toHaveBeenCalled()
+      // Forgotten: a later check from elsewhere, served at this page's old request time, is still not this page's.
+      lists.live = [alert({ id: 7, check_pending: true, check_requested_at: '2026-11-26T10:00:00Z', last_evaluated_at: '' })]
+      await client.invalidateQueries({ queryKey: ['alerts', 1] })
+      await screen.findByRole('button', { name: 'Checking…' })
+      lists.live = [alert({ id: 7, state: 'ok', check_requested_at: '2026-11-26T10:00:00Z', last_evaluated_at: '2026-11-26T10:02:00Z' })]
+      await vi.advanceTimersByTimeAsync(2_100)
+      expect(await screen.findByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled')
+      expect(toast).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
