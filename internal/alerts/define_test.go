@@ -621,3 +621,25 @@ func TestBuildRefusesValuesTheEngineWould(t *testing.T) {
 	_, err = Build(f)
 	mustInvalid(t, err, `query: steps[1].where[1].values: "wide" is not an integer`)
 }
+
+func TestParsedUnit(t *testing.T) {
+	cnt := native.Metric{Op: "count"}
+	avg := native.Metric{Op: "avg", Column: "value"}
+	bounce := statIn(store.AlertRead{Metric: "bounce_rate", Volume: "count"}, below5, native.Metric{Op: "bounce_rate"}, cnt)
+	bounce.Query.Table, bounce.Query.Where = "sessions", nil
+	for name, tc := range map[string]struct {
+		p    Parsed
+		want string
+	}{
+		"count":    {mustParse(t, statIn(store.AlertRead{}, below5, cnt)), "count"},
+		"fraction": {mustParse(t, bounce), "fraction"},
+		"number":   {mustParse(t, statIn(store.AlertRead{Metric: "avg_value", Volume: "count"}, below5, avg, cnt)), "number"},
+		"funnel":   {mustParse(t, funnelIn(store.AlertRead{Step: "paid"})), "fraction"},
+		"silence":  {mustParse(t, Input{WhereSet: true, Condition: silent6}), "hours"},
+		"zero":     {Parsed{}, ""},
+	} {
+		if got := tc.p.Unit(); got != tc.want {
+			t.Errorf("%s: Unit() = %q, want %q", name, got, tc.want)
+		}
+	}
+}

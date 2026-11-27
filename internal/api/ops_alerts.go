@@ -168,6 +168,7 @@ type alertOut struct {
 	State            string            `json:"state" jsonschema:"pending, ok, breached, no_data, broken, paused or snoozed"`
 	Reason           string            `json:"reason" jsonschema:"why it is broken or no_data; empty otherwise"`
 	LastValue        *float64          `json:"last_value" jsonschema:"the last evaluation's value (a silence alert's: hours since the newest matching event); null before the first, or when it had none"`
+	Unit             string            `json:"unit" jsonschema:"how value, last_value and a threshold's value read: count, fraction (0 to 1, shown as a percent), number, or hours (a silence alert's age); empty when kind is"`
 	LastValueText    string            `json:"last_value_text" jsonschema:"last_value as the read words it (3.4%, 1,240, last event 7h ago); — for none"`
 	LastEvaluatedAt  string            `json:"last_evaluated_at" jsonschema:"RFC 3339 UTC; empty before the first evaluation, again after a reset to pending (a new definition, a pause or snooze, a restore, an archived project), and from a check request until the check is served"`
 	LastDay          string            `json:"last_day" jsonschema:"the last day a metric alert's window ended on, YYYY-MM-DD; empty for silence and before the first"`
@@ -224,7 +225,7 @@ type alertHistoryOut struct {
 
 func toAlertOut(v alerts.View) alertOut {
 	d := v.Def
-	out := alertOut{ID: v.ID, ProjectID: v.ProjectID, Name: v.Name, Kind: v.Parsed.Kind, Query: d.Query,
+	out := alertOut{ID: v.ID, ProjectID: v.ProjectID, Name: v.Name, Kind: v.Parsed.Kind, Unit: v.Unit, Query: d.Query,
 		Read:      alertReadIO{Metric: d.Read.Metric, Volume: d.Read.Volume, Step: d.Read.Step, From: d.Read.From},
 		Condition: conditionIO(d.Condition), WindowDays: d.WindowDays, MinVolume: d.MinVolume,
 		Template: d.Template, Fields: d.Fields, Paused: v.Paused, SnoozedUntil: v.SnoozedUntil,
@@ -381,7 +382,7 @@ const (
 func (h *host) registerAlerts(r *registrar) {
 	const p = "/api/projects/{project_id}/alerts"
 	expose(r, spec{Name: "list_alerts", Annotations: ro, Method: "GET", Path: p,
-		Description: "A project's live alerts by name (archived: true lists the archived ones instead), and max_live, how many live alerts a project may have. Each has id, name, kind (stat, funnel or silence), query, read, where (silence), condition, window_days, min_volume, template and fields (when made from one), paused, snoozed_until, state (pending, ok, breached, no_data, broken, paused, snoozed), reason (why broken or no_data), last_value and last_value_text, last_evaluated_at, last_day (the last day its window ended on), check_requested_at and check_pending, recent (the newest 14 evaluations: at, value, outcome), created_at, updated_at and archived_at. Empty strings are none."},
+		Description: "A project's live alerts by name (archived: true lists the archived ones instead), and max_live, how many live alerts a project may have. Each has id, name, kind (stat, funnel or silence), unit (how values read: count, fraction, number or hours), query, read, where (silence), condition, window_days, min_volume, template and fields (when made from one), paused, snoozed_until, state (pending, ok, breached, no_data, broken, paused, snoozed), reason (why broken or no_data), last_value and last_value_text, last_evaluated_at, last_day (the last day its window ended on), check_requested_at and check_pending, recent (the newest 14 evaluations: at, value, outcome), created_at, updated_at and archived_at. Empty strings are none."},
 		h.listAlerts)
 	expose(r, spec{Name: "create_alert", Annotations: write, Method: "POST", Path: p, Status: http.StatusCreated, constrain: constrainAlert,
 		Description: "Create an alert, which notifies (the inbox and NOTIFY_URL) when its number breaches a line: name, condition, and exactly one source: query (a stat or a funnel) with read, where (a silence alert's events) or template with fields. " +

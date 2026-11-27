@@ -44,6 +44,9 @@ func TestAlertToolsOverMCP(t *testing.T) {
 	if list.MaxLive != 100 || len(list.Alerts) != 1 || list.Alerts[0].ID != created.ID || list.Alerts[0].Warnings != nil {
 		t.Errorf("list_alerts = %+v", list)
 	}
+	if list.Alerts[0].Unit != "count" {
+		t.Errorf("unit = %q, want count", list.Alerts[0].Unit)
+	}
 
 	renamed := callAs[alertOut](t, cs, "update_alert", map[string]any{"project_id": 1, "id": created.ID, "name": "Trials/day"})
 	if renamed.Name != "Trials/day" || !renamed.CheckPending || renamed.CheckRequestedAt != created.CheckRequestedAt || renamed.Warnings != nil {
@@ -236,4 +239,16 @@ func TestAlertToolsWithoutAlerts(t *testing.T) {
 	want("check_alert", err)
 	_, err = h.alertHistory(ctx, alertHistoryIn{ProjectID: 1, ID: 1})
 	want("alert_history", err)
+}
+
+// A funnel alert reads a fraction, and list_alerts says so in unit.
+func TestListAlertsUnit(t *testing.T) {
+	_, cs := newTestHost(t)
+	callAs[alertOut](t, cs, "create_alert", map[string]any{"project_id": 1, "name": "Signup to trial", "template": "conversion",
+		"fields":    map[string]any{"from_event": "signup", "to_event": "trial_started"},
+		"condition": map[string]any{"type": "threshold", "op": "below", "value": 0.2}})
+	list := callAs[alertsOut](t, cs, "list_alerts", map[string]any{"project_id": 1})
+	if len(list.Alerts) != 1 || list.Alerts[0].Kind != "funnel" || list.Alerts[0].Unit != "fraction" {
+		t.Errorf("list_alerts = %+v, want one funnel alert with unit fraction", list.Alerts)
+	}
 }

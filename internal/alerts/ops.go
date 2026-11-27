@@ -52,6 +52,9 @@ type View struct {
 	State string
 	// ValueText is the last value as the read words it.
 	ValueText string
+	// Unit is what the value, last value and a threshold read in: see
+	// Parsed.Unit; empty for a broken alert.
+	Unit string
 	// Recent are the newest evaluations, newest first, at most 14.
 	Recent []store.AlertEvaluation
 	// Warnings, on a create or an edit of the definition only, name the
@@ -470,7 +473,7 @@ func (o *Ops) views(ctx context.Context, as []store.Alert) ([]View, error) {
 		if a.SnoozedUntil <= now {
 			a.SnoozedUntil = "" // over: the view says not snoozed; the row keeps it
 		}
-		out[i] = View{Alert: a, Parsed: p, State: state, ValueText: formatValue(p, a.LastValue), Recent: recent[a.ID]}
+		out[i] = View{Alert: a, Parsed: p, State: state, ValueText: formatValue(p, a.LastValue), Unit: p.Unit(), Recent: recent[a.ID]}
 	}
 	return out, nil
 }
