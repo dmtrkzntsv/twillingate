@@ -528,6 +528,122 @@ interface ProjectsResponse {
   projects: Project[]
 }
 
+/** How an alert's values read: a count, a 0 to 1 fraction shown as a percent, a plain number, or a silence alert's age in hours; empty for a broken alert. */
+export type AlertUnit = 'count' | 'fraction' | 'number' | 'hours' | ''
+
+/** Where an alert stands (docs/twillingate.md, Alert states). */
+export type AlertState = 'pending' | 'ok' | 'breached' | 'no_data' | 'broken' | 'paused' | 'snoozed'
+
+/** What one evaluation found; `error` is a failed try that is retried. */
+export type AlertOutcome = 'ok' | 'breached' | 'no_data' | 'broken' | 'error'
+
+/** The line an alert watches, one shape per `type`. */
+export type AlertCondition =
+  | { type: 'threshold'; op: 'below' | 'above'; value: number }
+  | { type: 'change'; direction: 'drop' | 'rise' | 'either'; percent: number; against: 'previous' | 'week_ago' }
+  | { type: 'silence'; hours: number }
+
+/** The one number a stat or funnel alert reads: a stat's metric (and the volume a rate is judged by), a funnel's step and what it is divided by. */
+export interface AlertRead {
+  metric?: string
+  volume?: string
+  step?: string
+  from?: 'start' | 'previous'
+}
+
+/** A structured query filter, as a silence alert's `where` holds them. */
+export type AlertFilter = Record<string, unknown>
+
+/** An alert as list_alerts answers it; empty strings are none. */
+export interface Alert {
+  id: number
+  project_id: number
+  name: string
+  /** Empty when the stored definition no longer holds (the alert is broken). */
+  kind: 'stat' | 'funnel' | 'silence' | ''
+  unit: AlertUnit
+  /** The structured query as it runs, defaults written out; a silence alert's is the stat built from `where`. */
+  query: unknown
+  read: AlertRead
+  /** A silence alert's event filters. */
+  where?: AlertFilter[]
+  condition: AlertCondition
+  window_days: number
+  /** 0 for none. */
+  min_volume: number
+  template?: 'event_count' | 'unique_people' | 'conversion' | 'no_events'
+  fields?: Record<string, string>
+  paused: boolean
+  snoozed_until: string
+  state: AlertState
+  reason: string
+  last_value: number | null
+  last_value_text: string
+  last_evaluated_at: string
+  /** The last day a metric alert's window ended on, YYYY-MM-DD. */
+  last_day: string
+  check_requested_at: string
+  /** True until an evaluation at or after `check_requested_at`. */
+  check_pending: boolean
+  /** The newest 14 evaluations, newest first. */
+  recent: { at: string; value: number | null; outcome: AlertOutcome }[]
+  created_at: string
+  updated_at: string
+  archived_at: string
+  /** Create and a new definition only: what the project has never sent. */
+  warnings?: string[]
+}
+
+/** list_alerts' answer: the alerts by name, and how many live ones a project may hold. */
+export interface AlertsResponse {
+  alerts: Alert[]
+  max_live: number
+}
+
+/** Exactly one source defines what an alert watches; a request never carries two. */
+export type AlertSource =
+  | { template: string; fields: Record<string, string> }
+  | { where: AlertFilter[] }
+  | { query: unknown; read: AlertRead }
+
+/** update_alert's body: what is omitted is kept; `snoozed_until` null wakes the alert. */
+export interface AlertPatch {
+  name?: string
+  condition?: AlertCondition
+  window_days?: number
+  min_volume?: number
+  paused?: boolean
+  snoozed_until?: string | null
+  fields?: Record<string, string>
+}
+
+/** preview_alert's backtest: a metric alert's days, a silence alert's gaps, and how often it would have fired. */
+export interface AlertPreview {
+  days: { day: string; value: number | null; compare: number | null; volume: number | null; outcome: 'ok' | 'breached' | 'no_data' }[]
+  gaps: { from: string; to: string; hours: number }[]
+  fired: number
+}
+
+/** One stored evaluation of an alert. */
+export interface AlertEvaluation {
+  id: number
+  at: string
+  /** The days read; empty for silence. */
+  from: string
+  to: string
+  value: number | null
+  compare: number | null
+  volume: number | null
+  outcome: AlertOutcome
+  error: string
+}
+
+/** alert_history's page, newest first. */
+export interface AlertHistory {
+  evaluations: AlertEvaluation[]
+  next_cursor?: string
+}
+
 /** A form as list_forms answers it (forms D8, D12): a draft until approved with the fields it keeps. */
 export interface Form {
   name: string
@@ -757,6 +873,10 @@ function json(method: string, body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
 }
 
+function alertPath(projectId: number, id: number): string {
+  return `/api/projects/${projectId}/alerts/${id}`
+}
+
 function formPath(projectId: number, name: string): string {
   return `/api/projects/${projectId}/forms/${encodeURIComponent(name)}`
 }
@@ -878,6 +998,22 @@ export const endpoints = {
     api<WidgetShare>(`/api/widget-shares/${id}/restore`, json('POST', { archive_after })),
   /** A share's 1x PNG in any state; the public image URL answers 404 once the share is archived. */
   widgetShareImage: (id: string) => apiBlob(`/api/widget-shares/${id}/image`),
+  /** A project's alerts by name; `archived` lists the archived ones instead. */
+  alerts: (projectId: number, archived = false) =>
+    api<AlertsResponse>(`/api/projects/${projectId}/alerts${toQuery({ archived: archived || undefined })}`),
+  updateAlert: (projectId: number, id: number, patch: AlertPatch) =>
+    api<Alert>(alertPath(projectId, id), json('PATCH', patch)),
+  archiveAlert: (projectId: number, id: number) => api<Alert>(`${alertPath(projectId, id)}/archive`, json('POST', {})),
+  restoreAlert: (projectId: number, id: number) => api<Alert>(`${alertPath(projectId, id)}/restore`, json('POST', {})),
+  /** Asks for an evaluation now, served within a minute: the alert comes back with `check_pending` true. */
+  checkAlert: (projectId: number, id: number) => api<Alert>(`${alertPath(projectId, id)}/check`, json('POST', {})),
+  /** Backtests a saved alert (`{id}`) or a definition, without saving. */
+  previewAlert: (
+    projectId: number,
+    body: { id: number } | (AlertSource & { condition: AlertCondition; window_days?: number; min_volume?: number }),
+  ) => api<AlertPreview>(`/api/projects/${projectId}/alerts/preview`, json('POST', body)),
+  alertHistory: (projectId: number, id: number, cursor?: string, limit = 50) =>
+    api<AlertHistory>(`${alertPath(projectId, id)}/history${toQuery({ cursor, limit })}`),
   /** A project's forms, in the project's order (move_form; a new one last); `archived` lists the archived ones instead. */
   forms: (projectId: number, archived = false) =>
     api<FormsResponse>(`/api/projects/${projectId}/forms${toQuery({ archived: archived || undefined })}`),

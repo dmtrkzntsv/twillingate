@@ -122,6 +122,19 @@ export const widgetSharesQuery = (q: { widget_id?: number; state?: ShareState })
   queryFn: () => endpoints.widgetShares(q),
 })
 
+/** A project's alerts, the live ones or the archived ones. */
+export const alertsQuery = (projectId: number, archived = false) => ({
+  queryKey: ['alerts', projectId, archived] as const,
+  queryFn: () => endpoints.alerts(projectId, archived),
+})
+
+/** A saved alert's backtest; the past does not change within minutes, so it is kept five. */
+export const alertPreviewQuery = (projectId: number, id: number) => ({
+  queryKey: ['alert-preview', projectId, id] as const,
+  queryFn: () => endpoints.previewAlert(projectId, { id }),
+  staleTime: 5 * 60_000,
+})
+
 /** A project's forms, the active ones or the archived ones. */
 export const formsQuery = (projectId: number, archived = false) => ({
   queryKey: ['forms', projectId, archived ? 'archived' : 'active'] as const,
