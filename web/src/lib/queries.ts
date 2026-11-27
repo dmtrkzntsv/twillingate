@@ -128,6 +128,15 @@ export const alertsQuery = (projectId: number, archived = false) => ({
   queryFn: () => endpoints.alerts(projectId, archived),
 })
 
+/** An alert's evaluations, newest first, a page at a time. */
+export const alertHistoryQuery = (projectId: number, id: number) =>
+  infiniteQueryOptions({
+    queryKey: ['alert-history', projectId, id],
+    queryFn: ({ pageParam }) => endpoints.alertHistory(projectId, id, pageParam || undefined),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next_cursor,
+  })
+
 /** A saved alert's backtest; the past does not change within minutes, so it is kept five. */
 export const alertPreviewQuery = (projectId: number, id: number) => ({
   queryKey: ['alert-preview', projectId, id] as const,

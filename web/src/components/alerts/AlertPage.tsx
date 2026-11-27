@@ -17,6 +17,7 @@ import { formatAgo } from '@/lib/units'
 import AlertActions from './AlertActions'
 import AlertBacktest from './AlertBacktest'
 import AlertDefinition from './AlertDefinition'
+import AlertHistory from './AlertHistory'
 import AlertEditor from './AlertEditor'
 import AlertStateBadge from './AlertStateBadge'
 
@@ -165,7 +166,7 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
         />
       )}
       {!isArchived && alert.kind !== '' && <AlertBacktest projectId={projectId} alert={alert} draft={draft} />}
-      {/* The history slot: AlertHistory. */}
+      {alert.kind !== '' && <AlertHistory projectId={projectId} alert={alert} />}
     </div>
   )
 }
