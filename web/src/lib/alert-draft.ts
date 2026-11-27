@@ -107,7 +107,7 @@ export function addEdits(edits: DraftEdits, more: DraftEdits): DraftEdits {
 }
 
 /** The condition the draft means, in the alert's unit. Only meaningful once `draftErrors` has none for it. */
-function conditionOf(a: Alert, d: AlertDraft): AlertCondition {
+export function conditionOf(a: Alert, d: AlertDraft): AlertCondition {
   switch (d.conditionType) {
     case 'threshold':
       return { type: 'threshold', op: d.op, value: inputToThreshold(a.unit, d.value) ?? NaN }
