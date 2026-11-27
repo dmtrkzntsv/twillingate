@@ -32,14 +32,16 @@ function listPath(projectId: number, archived: boolean, search: string): string 
 export default function AlertTabs({ projectId, alertId, search }: Props) {
   const [url] = useSearchParams()
   const onAlert = alertId !== undefined
+  // The alert's id as the page reads it (`012` is alert 12); an address that is no id has none, and no list to look in.
+  const id = onAlert && /^\d+$/.test(alertId) ? Number(alertId) : null
   // Only an alert's page asks: on a list, that list's own query is the one to read.
-  const live = useQuery({ ...alertsQuery(projectId, false), enabled: onAlert })
-  const inLive = live.data?.alerts.some((a) => String(a.id) === alertId) ?? false
-  const archived = useQuery({ ...alertsQuery(projectId, true), enabled: onAlert && live.data !== undefined && !inLive })
+  const live = useQuery({ ...alertsQuery(projectId, false), enabled: id !== null })
+  const inLive = live.data?.alerts.some((a) => a.id === id) ?? false
+  const archived = useQuery({ ...alertsQuery(projectId, true), enabled: id !== null && live.data !== undefined && !inLive })
   let current: 'live' | 'archived' | null
   if (!onAlert) current = url.get('show') === 'archived' ? 'archived' : 'live'
   else if (inLive) current = 'live'
-  else if (archived.data?.alerts.some((a) => String(a.id) === alertId)) current = 'archived'
+  else if (archived.data?.alerts.some((a) => a.id === id)) current = 'archived'
   else current = null
 
   const tabs = [

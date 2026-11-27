@@ -89,6 +89,21 @@ describe('AlertTabs', () => {
     expect(endpoints.alerts).not.toHaveBeenCalledWith(1, true)
   })
 
+  it('reads an id with leading zeros as the number it is, as the page does', async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert({ id: 12 })] })
+    renderTabs('/projects/1/alerts/012', '012')
+    await vi.waitFor(() => expect(current()).toBe('Live'))
+    expect(endpoints.alerts).not.toHaveBeenCalledWith(1, true)
+  })
+
+  it('reads no list for an address that is no id, and marks none current', async () => {
+    const spy = vi.spyOn(endpoints, 'alerts')
+    renderTabs('/projects/1/alerts/abc', 'abc')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(spy).not.toHaveBeenCalled()
+    expect(current()).toBeNull()
+  })
+
   it('marks none current while the live list loads', () => {
     vi.spyOn(endpoints, 'alerts').mockReturnValue(new Promise(() => {}))
     renderTabs('/projects/1/alerts/12', '12')
