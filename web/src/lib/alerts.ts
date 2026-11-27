@@ -45,9 +45,10 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
-/** A threshold as words: a fraction's percent with trailing zeros trimmed, otherwise as the unit reads it. */
+/** A threshold as words: a fraction's percent with trailing zeros trimmed, a count or number with up to two decimals (a typed 0.5 stays 0.5), otherwise as the unit reads it. */
 function thresholdText(unit: AlertUnit, value: number): string {
   if (unit === 'fraction') return `${percentPoints(value)}%`
+  if (unit === 'count' || unit === 'number') return twoDecimals.format(value)
   return formatAlertValue(unit, value)
 }
 

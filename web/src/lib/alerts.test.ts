@@ -95,6 +95,9 @@ describe('describeCondition', () => {
     expect(
       describeCondition({ condition: { type: 'threshold', op: 'above', value: 2.456 }, unit: 'number', window_days: 2 }),
     ).toBe('above 2.46 over 2 days')
+    expect(
+      describeCondition({ condition: { type: 'threshold', op: 'below', value: 0.5 }, unit: 'count', window_days: 1 }),
+    ).toBe('below 0.5 over 1 day')
   })
   it('describes changes', () => {
     const c = (direction: 'drop' | 'rise' | 'either', against: 'previous' | 'week_ago'): AlertCondition => ({

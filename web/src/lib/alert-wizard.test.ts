@@ -50,6 +50,11 @@ describe('suggestName', () => {
     expect(suggestName(d.blank, d.draft)).toBe('No heartbeat on /x for 1 hour')
   })
 
+  it('keeps a fractional count threshold', () => {
+    const d = drafted('event_count', { value: '0.5' }, { event: '$page_view' })
+    expect(suggestName(d.blank, d.draft)).toBe('Count of $page_view below 0.5 over 1 day')
+  })
+
   it('names an above threshold', () => {
     const d = drafted('unique_people', { op: 'above', value: '100' }, { event: 'signup' })
     expect(suggestName(d.blank, d.draft)).toBe('Visitors doing signup above 100 over 1 day')
