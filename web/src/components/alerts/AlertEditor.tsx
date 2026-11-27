@@ -63,7 +63,6 @@ export default function AlertEditor({ projectId, alert, actions, draft, onEdit, 
     if (!saved) return
     toast.success('Saved')
     setWarnings(saved.warnings ?? [])
-    // The backtest is keyed by the definition: a new one is read once, a rename none.
     onReset()
   }
 
