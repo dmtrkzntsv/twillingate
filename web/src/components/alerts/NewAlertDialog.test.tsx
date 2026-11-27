@@ -208,7 +208,7 @@ describe('NewAlertDialog', () => {
     expect(d.getByLabelText('Threshold')).toHaveValue('5')
   })
 
-  it('says any other refusal under the step', async () => {
+  it('says any other refusal under the step, until the name changes', async () => {
     vi.spyOn(endpoints, 'createAlert').mockRejectedValue(new ApiError(400, 'the event files could not be read', 'invalid'))
     const user = userEvent.setup()
     renderList()
@@ -217,6 +217,31 @@ describe('NewAlertDialog', () => {
     expect(await d.findByRole('alert')).toHaveTextContent('the event files could not be read')
     expect(d.getByLabelText('Name')).not.toHaveAttribute('aria-invalid')
     expect(d.getByText('Step 3 of 3')).toBeInTheDocument()
+    await user.type(d.getByLabelText('Name'), ' 2')
+    expect(d.queryByRole('alert')).toBeNull()
+  })
+
+  it('refuses a name past 100 characters before sending it', async () => {
+    const create = vi.spyOn(endpoints, 'createAlert').mockResolvedValue(MADE)
+    const user = userEvent.setup()
+    renderList()
+    const d = await toStepThree(user)
+    const name = d.getByLabelText('Name')
+    await user.clear(name)
+    await user.click(name)
+    await user.paste('a'.repeat(101))
+    const msg = d.getByText('At most 100 characters')
+    expect(name).toHaveAttribute('aria-invalid', 'true')
+    expect(name.getAttribute('aria-describedby')).toBe(msg.id)
+    const button = d.getByRole('button', { name: 'Create alert' })
+    expect(button).toBeDisabled()
+    // Enter submits the form all the same: nothing is sent.
+    await user.type(name, '{Enter}')
+    expect(create).not.toHaveBeenCalled()
+
+    await user.type(name, '{Backspace}')
+    expect(d.queryByText('At most 100 characters')).toBeNull()
+    expect(button).toBeEnabled()
   })
 
   it('toasts the events the project never sent', async () => {

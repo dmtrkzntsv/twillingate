@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blankAlert, blankDraft, createBody, stepTwoErrors, suggestName, TEMPLATES, wizardAlert } from './alert-wizard'
+import { blankAlert, blankDraft, createBody, nameError, stepTwoErrors, suggestName, TEMPLATES, wizardAlert } from './alert-wizard'
 
 function drafted(template: Parameters<typeof blankAlert>[1], over: Record<string, unknown> = {}, fields: Record<string, string> = {}) {
   const blank = blankAlert(1, template)
@@ -122,5 +122,20 @@ describe('stepTwoErrors', () => {
     expect(Object.keys(stepTwoErrors(blank, draft)).sort()).toEqual(['fields', 'value'])
     const ok = drafted('event_count', { value: '5' }, { event: 'signup' })
     expect(stepTwoErrors(ok.blank, ok.draft)).toEqual({})
+  })
+})
+
+describe('nameError', () => {
+  it('asks for a name, and refuses one past 100 characters counted as the server counts them', () => {
+    expect(nameError('')).toBe('Enter a name')
+    expect(nameError('   ')).toBe('Enter a name')
+    expect(nameError('Signups')).toBeUndefined()
+    expect(nameError('a'.repeat(100))).toBeUndefined()
+    // Trimmed first, as the create sends it.
+    expect(nameError(' ' + 'a'.repeat(100) + ' ')).toBeUndefined()
+    expect(nameError('a'.repeat(101))).toBe('At most 100 characters')
+    // 100 characters outside the BMP are 200 UTF-16 units, and still fit.
+    expect(nameError('\u{1F514}'.repeat(100))).toBeUndefined()
+    expect(nameError('\u{1F514}'.repeat(101))).toBe('At most 100 characters')
   })
 })

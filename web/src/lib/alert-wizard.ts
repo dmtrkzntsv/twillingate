@@ -97,6 +97,14 @@ export function suggestName(blank: Alert, draft: AlertDraft): string {
   return capName(`${describeSource(w)} ${describeCondition({ condition, unit: blank.unit, window_days: window })}`)
 }
 
+/** What is wrong with a name the wizard would send, before the server is asked: none (`Enter a name`), or more characters than the server takes (code points, as it counts, once trimmed); undefined when it may be sent. */
+export function nameError(name: string): string | undefined {
+  const chars = Array.from(name.trim())
+  if (chars.length === 0) return 'Enter a name'
+  if (chars.length > NAME_LIMIT) return `At most ${NAME_LIMIT} characters`
+  return undefined
+}
+
 /** create_alert's body for the draft: preview_alert's (so the backtest and the create agree) with the trimmed name. */
 export function createBody(
   blank: Alert,

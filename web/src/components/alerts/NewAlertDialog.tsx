@@ -7,7 +7,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { Input } from '@/components/ui/input'
 import { useAlertActions } from '@/hooks/use-alert-actions'
 import { templateFieldErrors, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
-import { blankAlert, blankDraft, createBody, stepTwoErrors, suggestName, TEMPLATES, wizardAlert } from '@/lib/alert-wizard'
+import { blankAlert, blankDraft, createBody, nameError as checkName, stepTwoErrors, suggestName, TEMPLATES, wizardAlert } from '@/lib/alert-wizard'
 import { warningsText } from '@/lib/alerts'
 import { ApiError, endpoints, errorMessage, type Alert } from '@/lib/api'
 import { alertPath, rangeParams } from '@/lib/project-tabs'
@@ -84,7 +84,7 @@ function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void
 
   const create = async (e: FormEvent) => {
     e.preventDefault()
-    if (!blank || !draft || draft.name.trim() === '' || creating.current) return
+    if (!blank || !draft || checkName(draft.name) || creating.current) return
     creating.current = true
     setNameRefusal('')
     setRefusal('')
@@ -102,7 +102,9 @@ function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void
     void navigate(alertPath(projectId, made.id, rangeParams(url).toString()))
   }
 
-  const nameError = draft?.name.trim() === '' ? 'Enter a name' : nameRefusal || undefined
+  // What is wrong with the name before it is sent (empty, too long), which keeps Create alert off; else the server's refusal of it.
+  const nameInvalid = draft ? checkName(draft.name) : undefined
+  const nameError = nameInvalid ?? (nameRefusal || undefined)
 
   return (
     <>
@@ -153,6 +155,7 @@ function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void
               onChange={(e) => {
                 edit({ name: e.target.value })
                 setNameRefusal('')
+                setRefusal('')
               }}
               {...errorProps(`${id}-name`, nameError)}
             />
@@ -182,7 +185,7 @@ function Wizard({ projectId, onClose }: { projectId: number; onClose: () => void
           </Button>
         )}
         {step === 3 && (
-          <Button type="submit" form={`${id}-name-form`} disabled={actions.pending || draft?.name.trim() === ''}>
+          <Button type="submit" form={`${id}-name-form`} disabled={actions.pending || nameInvalid !== undefined}>
             Create alert
           </Button>
         )}
