@@ -19,6 +19,8 @@ const (
 	since       = "2026-11-07T08:00:00Z"
 )
 
+const alertDetail = "Below 3% on 2026-11-23 (1,240 at the first step)."
+
 var created = time.Date(2026, 11, 7, 12, 12, 0, 0, time.UTC) // 4h 12m after since
 
 // sample builds one notification of each type, with the fields the
@@ -57,6 +59,14 @@ func sample(typ string) store.Notification {
 		set("contact us", "form", "contact us")
 	case store.NotifyFormSubmission:
 		set("contact us", "form", "contact us", "count", "1")
+	case store.NotifyAlertBreached:
+		set("Signup conversion", "alert_id", "12", "since", since, "value", "2.1%", "detail", alertDetail)
+	case store.NotifyAlertStillBreached:
+		set("Signup conversion", "alert_id", "12", "since", since, "value", "2.1%", "detail", alertDetail)
+	case store.NotifyAlertRecovered:
+		set("Signup conversion", "alert_id", "12", "since", since, "until", created.Format(time.RFC3339), "value", "3.4%", "detail", alertDetail)
+	case store.NotifyAlertBroken:
+		set("Signup conversion", "alert_id", "12", "reason", "the funnel's first step no longer exists")
 	}
 	return n
 }
@@ -162,5 +172,23 @@ func TestExpiryTitlePlural(t *testing.T) {
 		if got := inbox.Render(n).Title; got != c.want {
 			t.Errorf("days %s: title %q, want %q", c.days, got, c.want)
 		}
+	}
+}
+
+func TestAlertEmojiAndPath(t *testing.T) {
+	var got []string
+	for _, typ := range []string{store.NotifyAlertBreached, store.NotifyAlertStillBreached, store.NotifyAlertRecovered, store.NotifyAlertBroken} {
+		n := sample(typ)
+		got = append(got, inbox.Emoji(n))
+		if p := inbox.Path(n); p != "/projects/3/alerts/12" {
+			t.Errorf("%s: path %q", typ, p)
+		}
+		delete(n.Fields, "alert_id")
+		if p := inbox.Path(n); p != "/inbox" {
+			t.Errorf("%s without alert_id: path %q", typ, p)
+		}
+	}
+	if want := "🔥 🔥 ✅ ⚠️"; strings.Join(got, " ") != want {
+		t.Errorf("emoji %q, want %q", strings.Join(got, " "), want)
 	}
 }

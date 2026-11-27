@@ -38,6 +38,9 @@ type Store interface {
 	// PurgeArchivedNotifications deletes the notifications archived more
 	// than days before now and returns how many. days <= 0 purges nothing.
 	PurgeArchivedNotifications(ctx context.Context, now time.Time, days int) (int, error)
+	// PruneAlertEvaluations deletes the alert evaluations made before the
+	// given time and returns how many.
+	PruneAlertEvaluations(ctx context.Context, before time.Time) (int, error)
 	// ArchiveDueWidgetShares archives every live share whose archive_at is
 	// at or before now and returns how many.
 	ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error)
@@ -107,6 +110,9 @@ type Runner struct {
 	// day however often the ticker lands inside its hour.
 	lastSaltDay string
 	lastPassDay string
+
+	// passDone is called at the end of every daily pass with its day.
+	passDone func(day civil.Date)
 }
 
 func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logger *slog.Logger, now func() time.Time) *Runner {
@@ -124,6 +130,9 @@ func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logge
 
 // WithArchive makes the pass maintain the archive's files.
 func (r *Runner) WithArchive(a Archive) *Runner { r.archive = a; return r }
+
+// OnPassDone makes fn run at the end of every daily pass, with the pass's day.
+func (r *Runner) OnPassDone(fn func(day civil.Date)) *Runner { r.passDone = fn; return r }
 
 // RunDailyPass archives the shares and draft forms past their date,
 // purges what was archived RETENTION_ARCHIVED_DAYS ago, removes the files
@@ -170,7 +179,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) {
 		r.logger.Info("purge archived",
 			"projects", len(purged.Projects), "dashboards", len(purged.Dashboards),
 			"widgets", len(purged.Widgets), "widget_shares", len(purged.WidgetShares),
-			"forms", len(purged.Forms), "submissions", purged.Submissions)
+			"forms", len(purged.Forms), "submissions", purged.Submissions, "alerts", len(purged.Alerts))
 		if len(purged.Projects) > 0 {
 			if err := r.reg.Reload(ctx); err != nil {
 				r.logger.Error("registry reload after purge failed", "error", err)
@@ -192,6 +201,14 @@ func (r *Runner) RunDailyPass(ctx context.Context) {
 		}
 	}
 	r.removeOrphanedArchives(ctx)
+
+	// Alert evaluations are kept AlertEvaluationDays on every pass, whatever
+	// RETENTION_ARCHIVED_DAYS is.
+	if n, err := r.store.PruneAlertEvaluations(ctx, r.now().AddDate(0, 0, -store.AlertEvaluationDays)); err != nil {
+		r.logger.Error("prune alert evaluations failed", "error", err)
+	} else {
+		r.logger.Info("prune alert evaluations", "alert_evaluations", n)
+	}
 
 	if err := r.store.IncrementalVacuum(ctx); err != nil {
 		r.logger.Error("incremental vacuum failed", "error", err)
@@ -216,6 +233,9 @@ func (r *Runner) RunDailyPass(ctx context.Context) {
 	}
 	if err := r.store.RecordUsageHistory(ctx, r.now(), fileBytes); err != nil {
 		r.logger.Error("record usage history", "error", err)
+	}
+	if r.passDone != nil {
+		r.passDone(today)
 	}
 }
 

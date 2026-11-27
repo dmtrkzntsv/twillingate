@@ -1,4 +1,52 @@
 {
+  "alert_breached": {
+    "Inbox": {
+      "Body": "Below 3% on 2026-11-23 (1,240 at the first step).",
+      "Link": "/projects/3/alerts/12",
+      "Title": "Signup conversion: 2.1%"
+    },
+    "Outgoing": {
+      "Body": "Below 3% on 2026-11-23 (1,240 at the first step).",
+      "Link": "https://c.example/app/projects/3/alerts/12",
+      "Title": "🔥 Blog <&> · Signup conversion: 2.1%"
+    }
+  },
+  "alert_broken": {
+    "Inbox": {
+      "Body": "the funnel's first step no longer exists.",
+      "Link": "/projects/3/alerts/12",
+      "Title": "Signup conversion is broken"
+    },
+    "Outgoing": {
+      "Body": "the funnel's first step no longer exists.",
+      "Link": "https://c.example/app/projects/3/alerts/12",
+      "Title": "⚠️ Blog <&> · Signup conversion is broken"
+    }
+  },
+  "alert_recovered": {
+    "Inbox": {
+      "Body": "Below 3% on 2026-11-23 (1,240 at the first step). Was breached for 4h 12m, since 2026-11-07 08:00 UTC.",
+      "Link": "/projects/3/alerts/12",
+      "Title": "Signup conversion: back to 3.4%"
+    },
+    "Outgoing": {
+      "Body": "Below 3% on 2026-11-23 (1,240 at the first step). Was breached for 4h 12m, since 2026-11-07 08:00 UTC.",
+      "Link": "https://c.example/app/projects/3/alerts/12",
+      "Title": "✅ Blog <&> · Signup conversion: back to 3.4%"
+    }
+  },
+  "alert_still_breached": {
+    "Inbox": {
+      "Body": "Below 3% on 2026-11-23 (1,240 at the first step). Breached for 4h 12m, since 2026-11-07 08:00 UTC.",
+      "Link": "/projects/3/alerts/12",
+      "Title": "Signup conversion: still 2.1%"
+    },
+    "Outgoing": {
+      "Body": "Below 3% on 2026-11-23 (1,240 at the first step). Breached for 4h 12m, since 2026-11-07 08:00 UTC.",
+      "Link": "https://c.example/app/projects/3/alerts/12",
+      "Title": "🔥 Blog <&> · Signup conversion: still 2.1%"
+    }
+  },
   "cert_expiring": {
     "Inbox": {
       "Body": "Expires 2026-11-16 00:00 UTC.",

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/dmtrkzntsv/twillingate/internal/alerts"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -39,8 +40,9 @@ const (
 // writes; sql is the external SQL engine the query tool's sql and sql
 // widgets run on (nil: none, and both are refused), under the same
 // CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX;
-// nat answers the query tool's structured queries and query widgets.
-func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, sql SQL, nat Native) (http.Handler, func() error, error) {
+// nat answers the query tool's structured queries and query widgets; al
+// are the alert operations (nil: every alert tool refuses).
+func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, sql SQL, nat Native, al *alerts.Ops) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
@@ -56,7 +58,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
 		ingestDisabled: cfg.IngestDisabled, monitorInterval: cfg.Monitor.Interval, monitorTimeout: cfg.Monitor.Timeout, sql: sql, native: nat, eventsDir: cfg.EventsDir,
-		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows}
+		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows, alerts: al}
 	if nat != nil {
 		h.events = h.newHostEventCount()
 		// Counted from the start, so the first limits read (the Projects
@@ -147,8 +149,8 @@ func registryRules(reg *manage.Registry) reporting.RulesFunc {
 // server's routes in token mode with a password configured; a browser
 // opening any other address gets the console's 404 page (NotFoundPages).
 // The func() error closes the read DB.
-func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, sql SQL, nat Native) (http.Handler, func() error, error) {
-	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, sql, nat)
+func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, sql SQL, nat Native, al *alerts.Ops) (http.Handler, func() error, error) {
+	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, sql, nat, al)
 	if err != nil {
 		return nil, nil, err
 	}

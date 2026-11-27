@@ -250,7 +250,8 @@ func TestViewRouteIsRESTOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tool := range tools.Tools {
-		if strings.Contains(tool.Name, "view") && !strings.HasPrefix(tool.Name, "views_") {
+		// views_* read the views; preview_alert backtests an alert.
+		if strings.Contains(tool.Name, "view") && !strings.HasPrefix(tool.Name, "views_") && tool.Name != "preview_alert" {
 			t.Errorf("MCP lists %s; the view route is REST-only", tool.Name)
 		}
 	}

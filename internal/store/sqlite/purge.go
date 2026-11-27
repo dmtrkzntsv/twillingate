@@ -144,6 +144,25 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		res.Forms = append(res.Forms, k.String())
 	}
 
+	// An alert archived on its own goes with its evaluations (the foreign
+	// key cascades). One of a project purged above is already gone.
+	alertIDs, err := queryColumn[int64](ctx, d.db,
+		`SELECT id FROM alerts
+		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
+	if err != nil {
+		errs = errors.Join(errs, fmt.Errorf("select archived alerts: %w", err))
+	}
+	res.Alerts = purgeEach(ctx, d, &errs, "alert", alertIDs, func(tx *sql.Tx, id int64) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM alert_evaluations WHERE alert_id=?`, id); err != nil {
+			return fmt.Errorf("delete alert %d evaluations: %w", id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM alerts WHERE id=?`, id); err != nil {
+			return fmt.Errorf("delete alert %d: %w", id, err)
+		}
+		return audit(ctx, tx, store.AuditEntry{
+			Actor: "retention", Action: "alert.purge", Subject: alertSubject(id)})
+	})
+
 	// Submissions archived on their own, one transaction and audit row per
 	// project. Those of a form or project purged above went with it. One
 	// whose $form_submit event still waits (pending_event, unlogged_event)

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/alerts"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -65,6 +66,9 @@ type host struct {
 	// keepalive is how often POST /api/widgets/stream sends a keepalive
 	// comment; 0 is sseKeepalive. Tests shorten it.
 	keepalive time.Duration
+	// alerts are the operations on metric alerts; nil in a process built
+	// without them, where every alert tool refuses.
+	alerts *alerts.Ops
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -404,7 +408,7 @@ func (h *host) register(r *registrar) {
 		Description: "Per live project: last_event_day (the day of the newest event in the event files, availability checks aside, looked for from the newest file's month back to the oldest; null with none), new_submissions (active submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
 		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every project and every family but the availability checks, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
+		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept), ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures) and alerts (the live alerts a project may have). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every project and every family but the availability checks, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
 		h.listLimits)
 	expose(r, spec{Name: "list_attributes", Annotations: ro, Method: "GET", Path: p + "/attributes",
 		Description: "A project's attributes, from the event files with the attribute rules applied: the keys its product events and measures carried over a range (default the last 30 days, at most 400). Per key the events that carried it and its distinct values over the range, whether any event carried it (received), whether block_attribute hides it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every key a rule names (received false when none carried it; a blocked key always); a key renamed away reads as its target and is listed only in its aliases. keys_total counts the distinct keys received. A key's values past 1,024 are estimated (about ±2%); a range with more keys than one pass counts is refused."},
@@ -502,6 +506,7 @@ func (h *host) register(r *registrar) {
 
 	h.registerForms(r)
 	h.registerNotifications(r)
+	h.registerAlerts(r)
 	h.registerReporting(r)
 	registerSchemaRoute(r)
 }

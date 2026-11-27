@@ -108,11 +108,11 @@ func (o *optionalTime) UnmarshalJSON(b []byte) error {
 	}
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
-		return invalidf("closes_at must be an RFC 3339 time or null")
+		return invalidf("must be an RFC 3339 time or null")
 	}
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return invalidf("closes_at %q is not an RFC 3339 time such as 2026-10-09T17:00:00Z", s)
+		return invalidf("%q is not an RFC 3339 time such as 2026-10-09T17:00:00Z", s)
 	}
 	t = t.UTC()
 	o.at = &t

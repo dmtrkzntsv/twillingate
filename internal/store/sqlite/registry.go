@@ -186,7 +186,8 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		n, _ := res.RowsAffected()
+		if n == 0 {
 			// Archiving an archived project is a no-op, either way on an
 			// unknown id an error; check existence to distinguish. (A
 			// restore matches every existing id, so only an unknown one
@@ -205,6 +206,15 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 			// would never finish.
 			if err := finishPendingChecks(ctx, tx, id, ""); err != nil {
 				return err
+			}
+			// Its alerts start again from pending at a new revision now,
+			// not at the runner's next tick: a restore before it would
+			// otherwise resume them as they were, and the tracker keep
+			// their states.
+			if n > 0 {
+				if err := resetProjectAlerts(ctx, tx, id); err != nil {
+					return err
+				}
 			}
 		}
 		return auditAndBump(ctx, tx, a)
@@ -277,7 +287,7 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
 	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions", "monitors", "monitor_domains",
-	"notifications", "notify_states", "form_bursts",
+	"notifications", "notify_states", "form_bursts", "alerts",
 }
 
 // DeleteProjectData hard-deletes every row keyed by the project's id, then

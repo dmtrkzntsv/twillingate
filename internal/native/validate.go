@@ -12,6 +12,23 @@ func invalid(path, format string, args ...any) error {
 	return fmt.Errorf("%w: %s: %s", ErrInvalid, path, fmt.Sprintf(format, args...))
 }
 
+// Check is Validate and the compiling answering does before it reads a
+// file: every filter's values parsed for its column's type (in where,
+// metrics, defined columns and a funnel's steps), so a query it passes is
+// one the engine will not refuse as ErrInvalid for its own shape. It
+// reads no data; the error wraps ErrInvalid and names the field.
+func (q Query) Check() error {
+	if _, err := compileQuery(q, Params{}); err != nil {
+		return err
+	}
+	for i, st := range q.Steps {
+		if _, err := compileFilters(st.Where, fmt.Sprintf("steps[%d].where", i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Validate refuses a malformed query; the error wraps ErrInvalid and names
 // the field.
 func (q Query) Validate() error {

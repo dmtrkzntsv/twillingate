@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/alerts"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
@@ -52,7 +53,12 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 		}
 	}
 	fixedByName := map[string]limitOut{}
+	var alertCap *limitOut
 	for _, l := range out.Limits[len(settings):] {
+		if l.Group == groupAlerts {
+			alertCap = &l
+			continue
+		}
 		if l.Group != groupIngest || l.Setting != "" || l.Default != nil || l.Description == "" {
 			t.Errorf("fixed limit = %+v, want an ingest limit with no setting or default", l)
 		}
@@ -68,6 +74,9 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 			t.Errorf("%s = %+v, want %v", name, fixedByName[name], v)
 		}
 	}
+	if alertCap == nil || alertCap.Value != alerts.MaxLive || alertCap.Setting != "" || alertCap.Default != nil || alertCap.Description == "" {
+		t.Errorf("the alert cap = %+v, want a fixed alerts limit of %d", alertCap, alerts.MaxLive)
+	}
 	// The MCP tool answers the same.
 	var mcpOut limitsOut
 	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "limits", map[string]any{}))), &mcpOut); err != nil {
@@ -78,9 +87,9 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 	}
 }
 
-// Nothing is capped any more, and SQLite keeps no raw window: limits has
-// no caps group, no row for the raw or aggregate retention, and no
-// raw_events.
+// Nothing in ingest is capped any more, and SQLite keeps no raw window:
+// limits has no caps group, no row for the raw or aggregate retention,
+// and no raw_events. The one cap is the alerts group's.
 func TestLimitsHasNoCaps(t *testing.T) {
 	h, cs := newTestHost(t)
 	h.limits = limitsFrom(&config.Config{})
@@ -90,8 +99,8 @@ func TestLimitsHasNoCaps(t *testing.T) {
 			"ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N":
 			t.Errorf("limits reports %s: %+v", l.Setting, l)
 		}
-		if l.Group != groupRetention && l.Group != groupIngest {
-			t.Errorf("limit %q in group %q, want retention or ingest", l.Name, l.Group)
+		if l.Group != groupRetention && l.Group != groupIngest && l.Group != groupAlerts {
+			t.Errorf("limit %q in group %q, want retention, ingest or alerts", l.Name, l.Group)
 		}
 		if strings.Contains(l.Description, "rolled up") {
 			t.Errorf("%s still speaks of days rolled up: %s", l.Name, l.Description)
@@ -102,6 +111,21 @@ func TestLimitsHasNoCaps(t *testing.T) {
 		if strings.Contains(raw, gone) {
 			t.Errorf("limits carries %s: %s", gone, raw)
 		}
+	}
+}
+
+// The alerts group holds one fixed limit, the live alerts a project may
+// have: alerts.MaxLive, with no setting.
+func TestLimitsReportsTheAlertCap(t *testing.T) {
+	var caps []limitOut
+	for _, l := range limitsFrom(&config.Config{}) {
+		if l.Group == groupAlerts {
+			caps = append(caps, l)
+		}
+	}
+	if len(caps) != 1 || caps[0].Value != 100 || caps[0].Setting != "" || caps[0].Default != nil || caps[0].Unit != "" ||
+		!strings.Contains(caps[0].Description, "create_alert") {
+		t.Errorf("alerts limits = %+v, want one fixed limit of 100", caps)
 	}
 }
 

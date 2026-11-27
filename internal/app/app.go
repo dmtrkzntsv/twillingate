@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/alerts"
 	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
@@ -157,6 +158,11 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// widgets and their start-up check).
 	nat := native.New(native.Options{Dir: cfg.EventsDir})
 	ops.Presence = &filePresence{nat: nat, reg: reg, timeout: cfg.Console.QueryTimeout}
+	// The alert operations answer in every process that serves the
+	// console; a preview's queries are bounded as the query tool's are.
+	al := alerts.NewOps(st, alertProjects{reg}, nat, ops.Presence)
+	al.Timeout = cfg.Console.QueryTimeout
+	al.LateDays = cfg.IngestLateDays
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
@@ -198,6 +204,19 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		logger.Warn("project has no active ingest keys and can receive nothing", "project_id", p.ID, "name", p.Name)
 	}
 
+	// The notification tracker and the alert runner live in the process
+	// that writes the event files. They are made before the jobs runner,
+	// whose daily pass tells the alert runner that yesterday is settled.
+	var tracker *inbox.Tracker
+	var alertRunner *alerts.Runner
+	if archiveLog != nil {
+		tracker = inbox.NewTracker(st, cfg.Notify.Remind, logger)
+		tracker.HoldDown(cfg.Notify.Brief)
+		ev := alerts.NewEvaluator(nat, alertProjects{reg}, ops.Presence, cfg.Console.QueryTimeout)
+		ev.LateDays = cfg.IngestLateDays
+		alertRunner = alerts.NewRunner(st, ev, tracker, logger)
+	}
+
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
 	if archiveLog != nil {
 		runner.WithArchive(archive.New(archiveLog, logger))
@@ -206,6 +225,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		// it arrives (natively) and writes its event to
 		// the log.
 		runner.WithAttribution(nat, archiveLog)
+		// Set before Run, so the boot pass signals too. The alert runner
+		// stops first at shutdown; PassDone never blocks, so a pass ending
+		// after it is harmless.
+		runner.OnPassDone(alertRunner.PassDone)
 	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	jobsDone := make(chan struct{})
@@ -213,14 +236,12 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	// The availability monitor runs in the process that writes the event
 	// files, beside jobs, and stops before the archive log closes. The
-	// notification tracker and dispatcher run beside it, on its context,
-	// also when monitoring is paused: forms still notify. monDone closes
-	// once all three have returned.
+	// notification tracker, the dispatcher and the alert runner run
+	// beside it, on its context, also when monitoring is paused: forms
+	// and alerts still notify. monDone closes once all four have returned.
 	monCtx, stopMonitor := context.WithCancel(context.Background())
 	monDone := make(chan struct{})
 	if archiveLog != nil {
-		tracker := inbox.NewTracker(st, cfg.Notify.Remind, logger)
-		tracker.HoldDown(cfg.Notify.Brief)
 		disp := inbox.NewDispatcher(st, sender, cfg.Console.URL, logger)
 		if sender != nil {
 			logger.Info("notifications are sent to a channel", "service", sender.Service())
@@ -236,6 +257,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		wg.Go(func() { mon.Run(monCtx) })
 		wg.Go(func() { tracker.Run(monCtx) })
 		wg.Go(func() { disp.Run(monCtx) })
+		wg.Go(func() { alertRunner.Run(monCtx) })
 		go func() { wg.Wait(); close(monDone) }()
 	} else {
 		close(monDone)
@@ -270,7 +292,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var apiClose func() error
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, sql, nat)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, sql, nat, al)
 		if err != nil {
 			stopBackground()
 			return err
@@ -281,7 +303,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, sql, nat)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, sql, nat, al)
 		if err != nil {
 			stopBackground()
 			return err

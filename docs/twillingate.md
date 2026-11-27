@@ -12,6 +12,8 @@ and backing up the database are the operator's job, in
 - [Set up a project](#set-up-a-project)
 - [Instrument a website](#instrument-a-website)
 - [Collect form submissions](#collect-form-submissions)
+- [Notifications](#notifications)
+- [Alerts](#alerts)
 - [The event model](#the-event-model)
 - [The wire format](#the-wire-format)
 - [Answer questions with the data](#answer-questions-with-the-data)
@@ -79,8 +81,8 @@ but a collector can answer on several hostnames; ask which one this site uses
 and change the snippet's `src`. The SDK posts to the origin it was loaded from.
 There is no rename (`project update -name` is one) and no delete over the API —
 deletion needs the CLI. Archiving is reversible with `restore_project`, but not
-forever: the daily pass deletes an archived project, dashboard, widget, form
-or form submission (and, for a project, all its data) once it has been archived longer than
+forever: the daily pass deletes an archived project, dashboard, widget, form,
+form submission or alert (and, for a project, all its data; for an alert, its evaluations) once it has been archived longer than
 `RETENTION_ARCHIVED_DAYS` (default 30; 0 keeps archived items forever).
 
 ```bash
@@ -1088,11 +1090,13 @@ submissions.
 twillingate tells you when something needs a look: a site that goes down
 and comes back, a certificate or a domain lookup that fails and recovers, a
 certificate or a domain about to expire, a new form waiting for approval or
-a draft dropped unapproved, and submissions to a form. Each is one item in
+a draft dropped unapproved, submissions to a form, and an alert that is
+breached, recovered or broken. Each is one item in
 the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
 set, the same title, body and link (the console page, `<CONSOLE_URL>/app/…`)
 sent to one channel, the title led there by an emoji (🔥 failing or
-expired, ✅ recovered, ⚠️ a brief outage already over, ⏳ expiring, 🆕, 🗑️ and 📝 for forms) and the project:
+expired or breached, ✅ recovered, ⚠️ a brief outage already over or a broken
+alert, ⏳ expiring, 🆕, 🗑️ and 📝 for forms) and the project:
 `🔥 Blog · https://blog.example is down`, then `Down since 2026-11-07 08:00
 UTC (HTTP 503).`; channels: Telegram, ntfy, Slack, Discord, a JSON webhook or
 email, set up as in
@@ -1131,7 +1135,7 @@ field values are never in a notification.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| Read the inbox | — | `list_notifications` | `{archived, project_id, limit, cursor}`, all optional; newest first, the active ones (`archived: true` the archived ones), of every project or of `project_id`; returns `notifications`, each with `id`, `type` (below), `project_id` and `project` (the name when it was created; both absent for none), `subject` (the origin, domain or form), `title`, `body`, `path` (the console page it leads to), `fields` (what it was rendered from), `created_at`, `archived_at` (absent while active), `delivery` (below) and `delivery_error` (after a failed send); `active`, the active items across every project; and `next_cursor`. Pages of `limit` (default 50, at most 200) |
+| Read the inbox | — | `list_notifications` | `{archived, project_id, limit, cursor}`, all optional; newest first, the active ones (`archived: true` the archived ones), of every project or of `project_id`; returns `notifications`, each with `id`, `type` (below), `project_id` and `project` (the name when it was created; both absent for none), `subject` (the origin, domain, form or alert name), `title`, `body`, `path` (the console page it leads to), `fields` (what it was rendered from), `created_at`, `archived_at` (absent while active), `delivery` (below) and `delivery_error` (after a failed send); `active`, the active items across every project; and `next_cursor`. Pages of `limit` (default 50, at most 200) |
 | Archive | — | `archive_notifications` | exactly one of `{ids}` or `{all: true}` (every active item); returns `archived` |
 | Restore | — | `restore_notifications` | `{ids}`; returns `restored` |
 
@@ -1157,6 +1161,10 @@ its own way. The examples are titles.
 | `form_draft_created` | the first submission to an unknown form created a draft waiting for approval |
 | `form_draft_discarded` | a draft passed `RETENTION_FORMS_DRAFT_DAYS` without approval and was archived |
 | `form_submission` | a submission to an approved form with `notify_submissions` on; a burst follow-up has `fields.count` |
+| `alert_breached` | an alert's evaluation breaches its condition: `Signup conversion: 2.1%`, with the detail as the body; `subject` is the alert's name, `fields.alert_id` its id, `fields.since` when it breached |
+| `alert_still_breached` | a reminder while it stays breached: `Signup conversion: still 2.1%`; a metric alert reminds once for each later day its window ends on, a silence alert every `NOTIFY_REMIND_HOURS` |
+| `alert_recovered` | an evaluation no longer breaches: `Signup conversion: back to 3.4%`, with how long it was breached (`fields.since`, `fields.until`) |
+| `alert_broken` | the alert cannot be evaluated (for instance an event it names was renamed): `Signup conversion is broken`, once; `fields.reason` says why. An evaluation that is ok or has no data clears the break silently. A breach under it is kept, so a later breach does not announce again, and an ok then recovers it as usual (`alert_recovered`) |
 
 ### Delivery
 
@@ -1169,6 +1177,166 @@ its own way. The examples are titles.
 | `failed` | a final failure, or still failing 6 hours after creation; `delivery_error` says why |
 | `none` | no channel was configured: the inbox holds it alone |
 | `skipped` | not tried within an hour of its creation (the process was down), so not sent late |
+
+## Alerts
+
+An alert watches one number of a project and notifies (the inbox and
+`NOTIFY_URL`, as [Notifications](#notifications) says) when it crosses a
+line: signups below 5 a day, a conversion dropping 30% against the week
+before, no heartbeat event for 6 hours. Alerts are made and read over MCP and
+the REST routes below; the console's Alerts tab comes later.
+
+**What it watches.** A `stat` or a `funnel` of the [structured
+query](#structured-queries) language, and a `read` naming its one number. A
+stat's `read` is `{metric}`, the metric's name (`count`, `actors`,
+`avg_value`; required when the stat has several). A rate or an average
+(`ratio`, `bounce_rate`, `avg`, `mean`, `percentile`) also needs `volume`, a
+second metric of the same stat counting the same rows (`count`, `actors`,
+`users`, `groups` or `weight`, over the same `where`), so a day of three
+sessions cannot page about its bounce rate. A funnel's `read` is `{step,
+from}`: that step (not the first) divided by the first (`from: "start"`, the
+default) or by the step just before it (`previous`), a conversion from 0 to
+1. The query's own `from`, `to`, `compare` and `shape` are not kept: the alert
+decides the days. Instead of `query` and `read`, an alert can come from a
+[template](#templates), or, for a silence alert, from `where`.
+
+**Conditions.**
+
+- `{"type": "threshold", "op": "below" | "above", "value": 0.03}`: breached
+  beyond the value, in the read's own unit (a conversion or a bounce rate is
+  0 to 1).
+- `{"type": "change", "direction": "drop" | "rise" | "either", "percent": 30,
+  "against": "previous" | "week_ago"}`: breached when the window moved by
+  `percent` (above 0, at most 1000, relative: 4.0% to 2.8% is a 30% drop)
+  against the as many days just before it (`previous`) or the same days a
+  week earlier (`week_ago`, which keeps weekdays apart). With `window_days`
+  over 7, `week_ago` overlaps the window itself; it is still allowed.
+- `{"type": "silence", "hours": 6}` (1 to 720): breached when no matching
+  event was received for that many hours. It takes `where`, the filters on the
+  events it watches (`[]` for every event), or the `no_events` template, and
+  builds its stat on `received_at`, the server's clock, so a late batch
+  arriving now counts as now.
+
+`window_days` (1 to 30, default 1, and 7 for `conversion`) is how many
+complete days a threshold or change reads, ending yesterday (UTC). A funnel
+counts only the steps taken inside the window, so a conversion slower than
+the window reads low. `min_volume` (1 or more, 0 for none) makes a window
+under it `no_data` instead of a breach; it measures a funnel's denominator
+step (the first, or with `read.from` `previous` the step before the one
+read), a rate's volume metric, or a change's comparison value (so 1 → 4 is
+not "+300%"); a threshold on a count takes none (its value is what is watched),
+and a silence alert takes neither.
+
+**When it runs.** A threshold or change alert is evaluated once a day, after
+the 03:00 UTC daily pass (or from 04:00 without it), over the complete days
+through yesterday; after downtime it catches up once, for yesterday only. An
+app's offline batch can still land for yesterday up to `INGEST_LATE_DAYS`
+later, so on an app-heavy project yesterday may read a little short. A
+silence alert is evaluated hourly, on the newest matching event in today's
+file and the `ceil(hours / 24) + INGEST_LATE_DAYS` days before it (an event
+received in the last `hours` can be filed by its timestamp up to
+`INGEST_LATE_DAYS` earlier). Creating an alert, changing its
+definition, resuming or waking it and `check_alert` request a check, which the server
+serves within a minute; a check is an evaluation like any other and can
+notify. Evaluations run in the process that writes the event files, and are
+kept 400 days (`alert_history`).
+
+**No data and broken.** A value of nothing (a rate over no rows, a funnel
+whose denominator step is 0), a window under `min_volume` or a change against 0 is
+`no_data`, never a breach; a count's 0 is a real value. An event or attribute
+the query names that the project has never sent is `no_data` too, with
+`reason` `never sent: <name>`: saving one is allowed, with a `warnings` entry,
+so an alert can be set up before a launch. What only a `never` filter names
+need not have been sent (no one having done it is what the filter asks), so
+it neither warns nor reads `no_data`; event and attribute rules apply to it
+as to the rest. An event an event rule renames, merges or blocks, or an
+`attr_<key>` an attribute rule does (its key in any case, as columns
+match; over `product`, `measures` or `events`, since the rules never cover
+`views` or `checks`), is refused at save, naming its new name, and turns a
+saved alert `broken`, as does a query the engine no longer accepts; a runtime failure (a timeout, a busy engine, a
+file gone mid-read, a failed check of what the project has sent) is tried
+again an hour later, and is `broken` after 3 failed tries in a row.
+`alert_broken` is raised once; a later evaluation that is ok or has no data
+clears it silently, and a breach under it carries on (no new
+`alert_breached`; an ok recovers it as usual). An alert of an
+archived project is not evaluated, and restoring the project resumes it from
+`pending`.
+
+**Pause, snooze, edit.** `paused: true` stops an alert until `paused: false`;
+`snoozed_until`, a time ahead, stops it until then, and it resumes on its own
+(`null` wakes it at once, and changes nothing once the snooze is over). Neither evaluates nor notifies, and both end a
+breach without a recovery, as archiving does. Changing the query, read,
+condition, window or minimum volume ends the state without a notification,
+sets it `pending` and requests a check, so the next firing is about the new
+line; a rename does not.
+
+**Backtest.** `preview_alert` runs a definition (or a saved alert) over the
+past, reading only: a stat's 90 days ending yesterday and a funnel's 30, each
+day's window judged as an evaluation would judge it (without asking whether
+its events were ever sent), and `fired`, the runs of breached days. A silence
+alert's backtest lists the gaps longer than its hours from the start of the
+day 30 days back to now (at least 720 hours, the most an alert may name), from the hours of the events' own timestamps (those of the
+`INGEST_LATE_DAYS` days before the window too, where an event received in
+it can be filed), counting a gap from the window's start, while the live check runs hourly on `received_at`: its
+"would have fired N times" is an estimate. A backtest reads settled days, so
+on an app-heavy project it may look calmer than live firings.
+
+**Limits.** A project holds at most 100 live alerts (`limits`, group
+`alerts`); `create_alert` and `restore_alert` refuse past it with
+`conflict`. Names are unique among a project's live alerts (`conflict`).
+Archiving frees the name; archived alerts are purged with their evaluations
+`RETENTION_ARCHIVED_DAYS` (default 30; 0 never) after archiving.
+
+| Operation | CLI | MCP tool | Tool arguments |
+| --- | --- | --- | --- |
+| List | — | `list_alerts` | `{project_id, archived}`; returns `alerts`, by name, and `max_live`. Each alert has `id`, `project_id`, `name`, `kind` (`stat`, `funnel` or `silence`; empty when its definition no longer holds), `query` (as it runs, defaults written out), `read`, `where` (silence only), `condition`, `window_days`, `min_volume` (0 for none), `template` and `fields` (when made from one), `paused`, `snoozed_until` (empty when not snoozed, and once the snooze is over), `state` and `reason` ([below](#alert-states)), `last_value` (`null` before the first evaluation or when it had none) and `last_value_text` (as the read words it: `3.4%`, `1,240`, `last event 7h ago`; a silence alert's `last_value` is that age in hours), `last_evaluated_at` (empty before the first evaluation, after a reset to `pending`, and from a check request until the check is served), `last_day` (the last day a metric window ended on), `check_requested_at`, `check_pending`, `recent` (the newest 14 evaluations, newest first: `at`, `value`, `outcome`), `created_at`, `updated_at` and `archived_at`. Empty strings are none |
+| Create | — | `create_alert` | `{project_id, name, condition, window_days, min_volume}` and exactly one of `{query, read}`, `{where}` (silence) or `{template, fields}`; returns the alert, `pending` with a check requested, and `warnings` naming what the project never sent |
+| Backtest | — | `preview_alert` | `{project_id}` and a definition as `create_alert` takes it (`name` ignored), or `{project_id, id}`; returns `days` (`day`, `value`, `compare`, `volume`, `outcome`), `gaps` (`from`, `to`, `hours`) and `fired` |
+| Change | — | `update_alert` | `{project_id, id}` and any of `name`, `condition` (whole), `window_days`, `min_volume`, `paused`, `snoozed_until` (`null` wakes it), and a new source: `query` (with `read`, or none), `where`, or `template` (with `fields`, or none) replaces the old one whole; `read` alone keeps the query, `fields` alone the template. Omitted fields are kept, except that a `condition` switching into or out of `silence` resets `window_days` and `min_volume` to their defaults unless given. An edit that another lands under (the server merges over the alert as it read it) is refused with `conflict`: read the alert again and repeat the edit. Returns the alert; `warnings` only when the definition changed |
+| Archive | — | `archive_alert` | `{project_id, id}`; returns the alert |
+| Restore | — | `restore_alert` | `{project_id, id}`; returns the alert, `pending` |
+| Check now | — | `check_alert` | `{project_id, id}`: a request, served within a minute. Returns the alert at once with `check_requested_at` and `check_pending: true`; poll `list_alerts` (or `alert_history`) until `check_pending` is false. A request while one is pending answers the alert unchanged; a paused, snoozed or archived alert, or one of an archived project, is refused (`invalid`): none is evaluated |
+| History | — | `alert_history` | `{project_id, id, limit, cursor}`; returns `evaluations`, newest first (`id`, `at`, `from` and `to`, the days read, empty for silence, `value`, `compare`, `volume`, `outcome`, `error`), and `next_cursor`. Pages of `limit` (default 50, at most 400) |
+
+### Templates
+
+A template builds the query and read from a few fields and is kept with the
+alert, so it reopens with every field editable. An empty field is an absent
+one; a field the template does not take is refused.
+
+| Template | Fields | Builds | Conditions |
+| --- | --- | --- | --- |
+| `event_count` | `event` (required), `path` (only with `$page_view`: one page) | a stat counting the event | threshold, change |
+| `unique_people` | `event` (optional: every event without), `who`: `actors` (visitors, the default) or `users` (signed-in users) | a stat of distinct `actors` or `users` | threshold, change |
+| `conversion` | `from_event` and `to_event` (required), `from_path`, `to_path`, `people`: `actor` (the default) or `user` | a two-step funnel reading the second step over the first; its window defaults to 7 days, since a conversion slower than the window reads low | threshold (0 to 1), change |
+| `no_events` | `event` (required), `path` (only with `$page_view`) | a silence alert on the event | silence |
+
+### Alert states
+
+`state` is one of these. Notifications follow only breached, recovered and
+broken (the `alert_*` [types](#notification-types)).
+
+| State | Meaning |
+| --- | --- |
+| `pending` | not evaluated since it was created, restored, its definition changed, it was resumed or woken, or its project restored; a check is usually on its way |
+| `ok` | the last evaluation was inside the line |
+| `breached` | the last evaluation crossed the line |
+| `no_data` | the last evaluation had nothing to judge (`reason` says why: under `min_volume`, no value, a change against 0, or `never sent: <name>`); the ok or breached state before it is kept for notifications |
+| `broken` | the alert cannot be evaluated: its query no longer holds, an event rule renamed or blocked an event it names (an attribute rule an attribute), or 3 tries in a row failed; `reason` says why |
+| `paused` | `paused` is on: not evaluated |
+| `snoozed` | `snoozed_until` is ahead: not evaluated until then |
+
+### Evaluation outcomes
+
+Each evaluation in `alert_history` (and `recent`) has one `outcome`:
+
+| Outcome | Meaning |
+| --- | --- |
+| `ok` | inside the line |
+| `breached` | across the line |
+| `no_data` | nothing to judge; `error` holds the reason |
+| `broken` | could not be evaluated: its query no longer holds, or an event rule renamed or blocked an event it names; `error` says why |
+| `error` | a runtime failure, tried again an hour later (a silence alert at its next hourly run); the third in a row turns the alert `broken` |
 
 ---
 
@@ -1731,9 +1899,9 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets seventy-four tools: the thirty-four below, the twelve
+A connected session gets eighty-two tools: the thirty-four below, the twelve
 in [Collect form submissions](#collect-form-submissions), the three in
-[Notifications](#notifications), and twenty-five
+[Notifications](#notifications), the eight in [Alerts](#alerts), and twenty-five
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -1749,7 +1917,7 @@ history starts where the files' does. `query`, the count of events in
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), and `allowed_origins`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every project and every family but the availability checks, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`), `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions), and `alerts`: the live [alerts](#alerts) a project may have (100). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing in ingest is capped; `alerts` holds the live alerts a project may have. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every project and every family but the availability checks, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days; at most 400 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received. A key's `values` past 1,024 are estimated (about ±2%). A range with more keys than the engine counts in one pass is refused: narrow it |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, and apart from those the availability `checks` (every row of the `checks` table, see [Monitoring](#monitoring)), `last_received_at` (when the newest event arrived, availability checks aside, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured) |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day: an actor seen under two kinds on one day counts once), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec` (a day with views but no session reads `0` for each), over every kind unless `kind` filters one. Today included. At most 1,000 days, the earliest |
@@ -1889,6 +2057,14 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/notifications` | `list_notifications` | query: `archived`, `project_id`, `limit`, `cursor` |
 | `POST` | `/api/notifications/archive` | `archive_notifications` | body: one of `ids`, `all: true` → `{"archived": n}` |
 | `POST` | `/api/notifications/restore` | `restore_notifications` | body: `ids` → `{"restored": n}` |
+| `GET` | `/api/projects/{project_id}/alerts` | `list_alerts` | query: `archived` → `{"alerts":[…],"max_live"}` |
+| `POST` | `/api/projects/{project_id}/alerts` | `create_alert` | body: `name`, `condition`, `window_days`, `min_volume`, and `query` with `read`, `where` or `template` with `fields` → 201, the alert with `warnings` |
+| `POST` | `/api/projects/{project_id}/alerts/preview` | `preview_alert` | body: a definition as `create_alert`'s, or `id` → `{"days":[…],"gaps":[…],"fired"}` |
+| `PATCH` | `/api/projects/{project_id}/alerts/{id}` | `update_alert` | body: fields to change (merge); `snoozed_until: null` wakes it; 409 when another edit changed it mid-merge |
+| `POST` | `/api/projects/{project_id}/alerts/{id}/archive` | `archive_alert` | — |
+| `POST` | `/api/projects/{project_id}/alerts/{id}/restore` | `restore_alert` | — ; a taken name or a full project is `409` |
+| `POST` | `/api/projects/{project_id}/alerts/{id}/check` | `check_alert` | — → the alert, right away, before the check ran; a paused, snoozed or archived alert, or one of an archived project, is `400` |
+| `GET` | `/api/projects/{project_id}/alerts/{id}/history` | `alert_history` | query: `limit`, `cursor` → `{"evaluations":[…],"next_cursor"}` |
 | `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |

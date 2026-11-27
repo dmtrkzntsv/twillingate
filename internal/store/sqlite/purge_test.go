@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -633,5 +634,60 @@ func TestPurgeArchivedProjectTakesItsForms(t *testing.T) {
 	if c := countRows(t, db, `SELECT COUNT(*) FROM forms WHERE project_id=?`, id) +
 		countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=?`, id); c != 0 {
 		t.Fatalf("%d form rows left", c)
+	}
+}
+
+func TestPurgeArchivedTakesAlerts(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := createPurgeableProject(t, db, "app")
+	old, recent := newAlert(t, db, p, "old"), newAlert(t, db, p, "recent")
+	if ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: old.ID, Revision: old.Revision, Eval: evalOf(old, alertAt, 1)}); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	for id, days := range map[int64]int{old.ID: 40, recent.ID: 10} {
+		if _, err := db.ExecForTest(`UPDATE alerts SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now', ?) WHERE id=?`, daysAgoModifier(days), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := db.PurgeArchived(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(res.Alerts, []int64{old.ID}) {
+		t.Fatalf("Alerts = %v, want [%d]", res.Alerts, old.ID)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM alerts WHERE id=?`, old.ID); n != 0 {
+		t.Errorf("old alert left")
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM alert_evaluations`); n != 0 {
+		t.Errorf("evaluations left: %d", n)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM alerts WHERE id=?`, recent.ID); n != 1 {
+		t.Errorf("recent alert gone")
+	}
+	rows := auditRows(t, db, "alert.purge")
+	if len(rows) != 1 || rows[0].Actor != "retention" || rows[0].Subject != alertSubject(old.ID) {
+		t.Errorf("audit = %+v", rows)
+	}
+}
+
+// TestPurgedAlertIDIsNeverReused: a purged alert's id is not issued
+// again, even when it was the highest, so an old notification's alert_id
+// or link never names a new alert.
+func TestPurgedAlertIDIsNeverReused(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := createPurgeableProject(t, db, "app")
+	newAlert(t, db, p, "kept")
+	last := newAlert(t, db, p, "last")
+	if _, err := db.ExecForTest(`UPDATE alerts SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-40 days') WHERE id=?`, last.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || !reflect.DeepEqual(res.Alerts, []int64{last.ID}) {
+		t.Fatalf("purge = %+v, %v", res.Alerts, err)
+	}
+	if next := newAlert(t, db, p, "next"); next.ID <= last.ID {
+		t.Fatalf("new alert id %d, want above the purged %d", next.ID, last.ID)
 	}
 }

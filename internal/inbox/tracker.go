@@ -43,6 +43,10 @@ const (
 	kindDomain       = "domain"
 	kindCertExpiry   = "cert_expiry"
 	kindDomainExpiry = "domain_expiry"
+	// kindAlert is the state of an alert, keyed by its id (decimal): not
+	// tied to a monitor, so Tick neither prunes nor reminds it; Alert and
+	// KeepAlerts own it.
+	kindAlert = "alert"
 )
 
 const (
@@ -89,6 +93,10 @@ type entry struct {
 	Error      string    `json:"error,omitempty"`
 	ExpiresAt  string    `json:"expires_at,omitempty"`
 	Step       int       `json:"step,omitempty"` // the last step sent for ExpiresAt; 0 none
+	// An alert uses Failing (breached), Since, RemindedAt and Ended too.
+	Rev    int64  `json:"rev,omitempty"`    // the alert revision the state belongs to
+	Day    string `json:"day,omitempty"`    // the window's last day at the latest breach message
+	Broken bool   `json:"broken,omitempty"` // broken now, the breach (if any) kept under it
 }
 
 // Tracker decides, from each check result and reading, when a failing,
@@ -311,6 +319,139 @@ func (t *Tracker) Tick(ctx context.Context, now time.Time) {
 	}
 }
 
+// AlertKey names an alert: its project and id.
+type AlertKey struct{ ProjectID, ID int64 }
+
+// AlertObservation is one evaluation of an alert, as the tracker reads it.
+type AlertObservation struct {
+	Key      AlertKey
+	Revision int64
+	Name     string // the notification's Subject
+	Daily    bool   // a metric alert: reminds once per Day; else every remind interval
+	Day      string // the window's last day, YYYY-MM-DD; "" for silence
+	// Outcome is store.AlertOK, AlertBreached, AlertBroken or AlertNoData
+	// (which only clears Broken, silently).
+	Outcome string
+	Fields  map[string]string // "value", "detail"; "reason" when broken
+	At      time.Time
+}
+
+// Alert records one evaluation of an alert. A breach announces once and
+// reminds with alert_still_breached: a Daily alert once per later Day, a
+// silence alert every remind interval; the recovery says how long it
+// lasted. A broken alert announces once, keeping its breach under it, so a
+// breach after the break (or a recovery) continues from before it; ok or
+// no_data clears the break silently. An observation of another revision
+// starts over without a recovery. Alert reminders come only from here, so
+// they continue while monitoring is paused.
+func (t *Tracker) Alert(ctx context.Context, o AlertObservation) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.load(ctx) {
+		return
+	}
+	at := o.At.UTC()
+	k := key{o.Key.ProjectID, kindAlert, strconv.FormatInt(o.Key.ID, 10)}
+	e, ok := t.states[k]
+	if ok && e.Rev != o.Revision {
+		t.del(ctx, k)
+		delete(t.states, k) // a failed delete must not be continued either
+		e, ok = entry{}, false
+	}
+	e.Rev = o.Revision
+	fields := func(kv ...string) map[string]string {
+		f := map[string]string{"alert_id": k.subject}
+		for name, v := range o.Fields {
+			f[name] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			f[kv[i]] = kv[i+1]
+		}
+		return f
+	}
+	note := func(typ string, f map[string]string) *store.NewNotification {
+		return &store.NewNotification{Type: typ, ProjectID: k.projectID, Subject: o.Name, Fields: f, At: at}
+	}
+
+	switch o.Outcome {
+	case store.AlertOK:
+		if !ok {
+			return
+		}
+		if e.Failing {
+			n := note(store.NotifyAlertRecovered, fields("since", stampRFC(e.Since), "until", stampRFC(at)))
+			if !t.put(ctx, k, entry{Rev: e.Rev, Ended: at}, n) {
+				return
+			}
+		}
+		t.del(ctx, k)
+	case store.AlertNoData:
+		if ok && e.Broken {
+			t.unbreak(ctx, k, e)
+		}
+	case store.AlertBroken:
+		if e.Broken {
+			return
+		}
+		e.Broken = true
+		t.put(ctx, k, e, note(store.NotifyAlertBroken, fields()))
+	case store.AlertBreached:
+		if !e.Failing {
+			e.Failing, e.Broken, e.Since, e.RemindedAt, e.Day = true, false, at, at, o.Day
+			t.put(ctx, k, e, note(store.NotifyAlertBreached, fields("since", stampRFC(at))))
+			return
+		}
+		due := false
+		if o.Daily {
+			due = o.Day > e.Day
+		} else {
+			due = t.remind > 0 && at.Sub(e.RemindedAt) >= t.remind
+		}
+		if !due {
+			if e.Broken {
+				t.unbreak(ctx, k, e)
+			}
+			return
+		}
+		e.Broken, e.RemindedAt = false, at
+		if o.Daily {
+			e.Day = o.Day
+		}
+		t.put(ctx, k, e, note(store.NotifyAlertStillBreached, fields("since", stampRFC(e.Since))))
+	}
+}
+
+// unbreak ends the broken flag of e silently: the breach under it stays,
+// a state that was only broken is deleted.
+func (t *Tracker) unbreak(ctx context.Context, k key, e entry) {
+	if !e.Failing {
+		t.del(ctx, k)
+		return
+	}
+	e.Broken = false
+	t.put(ctx, k, e, nil)
+}
+
+// KeepAlerts drops, without a recovery, the alert states whose alert is
+// not in live (id -> revision) or is at another revision: deleted,
+// archived, or edited since.
+func (t *Tracker) KeepAlerts(ctx context.Context, live map[AlertKey]int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.load(ctx) {
+		return
+	}
+	for k, e := range t.states {
+		if k.kind != kindAlert {
+			continue
+		}
+		id, err := strconv.ParseInt(k.subject, 10, 64)
+		if rev, ok := live[AlertKey{k.projectID, id}]; err != nil || !ok || rev != e.Rev {
+			t.del(ctx, k)
+		}
+	}
+}
+
 // Run calls Tick every minute until ctx ends.
 func (t *Tracker) Run(ctx context.Context) {
 	tk := time.NewTicker(time.Minute)
@@ -338,7 +479,7 @@ func (t *Tracker) tick(ctx context.Context, now time.Time) {
 	}
 	keys := make([]key, 0, len(t.states))
 	for k, e := range t.states {
-		if e.Failing && now.Sub(e.RemindedAt) >= t.remind {
+		if k.kind != kindAlert && e.Failing && now.Sub(e.RemindedAt) >= t.remind {
 			keys = append(keys, k)
 		}
 	}
@@ -403,6 +544,9 @@ func (t *Tracker) prune(ctx context.Context) {
 		}
 	}
 	for k, e := range t.states {
+		if k.kind == kindAlert {
+			continue
+		}
 		failingKind := k.kind == kindUptime || k.kind == kindCert || k.kind == kindDomain
 		if failingKind && !e.Failing && e.Since.IsZero() { // an ended or empty row
 			t.del(ctx, k)

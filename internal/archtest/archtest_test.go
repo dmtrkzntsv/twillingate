@@ -1,8 +1,9 @@
 // Package archtest pins the package graph described in CLAUDE.md
-// ("Layout"): leaves import only leaves, manage sits above the leaves,
-// the surfaces (server, api, jobs, monitor, pipeline) import
-// leaves and manage but never each other, and internal/app is the only
-// package that wires the surfaces together. cmd/ is unconstrained.
+// ("Layout"): leaves import only leaves, manage, reporting and alerts
+// sit above the leaves, the surfaces (server, api, jobs, monitor,
+// pipeline) import leaves and those but never each other, and
+// internal/app is the only package that wires the surfaces together.
+// cmd/ is unconstrained.
 //
 // Every package under internal/ must appear in the rank table; an
 // unlisted one fails the test, so a new package is placed deliberately
@@ -51,6 +52,7 @@ var rank = map[string]int{
 	"internal/wire":                0,
 	"internal/reporting/sqlbind":   0,
 	"internal/manage":              1,
+	"internal/alerts":              1,
 	"internal/reporting":           1,
 	"internal/pipeline":            2,
 	"internal/jobs":                2,

@@ -716,6 +716,11 @@ func (s *passOnlyStore) PurgeArchivedNotifications(context.Context, time.Time, i
 	return 0, nil
 }
 
+func (s *passOnlyStore) PruneAlertEvaluations(_ context.Context, before time.Time) (int, error) {
+	s.call("PruneAlertEvaluations " + before.Format(time.RFC3339))
+	return 0, nil
+}
+
 func (s *passOnlyStore) ArchiveDueWidgetShares(context.Context, time.Time) (int, error) {
 	s.call("ArchiveDueWidgetShares")
 	return 0, nil
@@ -752,7 +757,7 @@ func TestPassRunsNoEventWork(t *testing.T) {
 	a := &fakeArchive{sizes: map[int64]int64{1: 7}}
 	r.WithArchive(a)
 	r.RunDailyPass(context.Background())
-	want := []string{"ArchiveDueWidgetShares", "ExpireDrafts", "PurgeArchived", "PurgeArchivedNotifications", "IncrementalVacuum", "RecordUsageHistory map[1:7]"}
+	want := []string{"ArchiveDueWidgetShares", "ExpireDrafts", "PurgeArchived", "PurgeArchivedNotifications", "PruneAlertEvaluations 2025-07-18T04:00:00Z", "IncrementalVacuum", "RecordUsageHistory map[1:7]"}
 	if !slices.Equal(st.calls, want) {
 		t.Errorf("store calls = %v, want %v", st.calls, want)
 	}
@@ -793,5 +798,38 @@ func TestDailyPassPurgesNotifications(t *testing.T) {
 	}
 	if n, err := st.CountActiveNotifications(ctx); err != nil || n != 1 {
 		t.Fatalf("active = %d, %v; want 1", n, err)
+	}
+}
+
+// TestDailyPassPrunesAlertEvaluations: every pass prunes the evaluations
+// older than AlertEvaluationDays, even with RETENTION_ARCHIVED_DAYS at 0.
+func TestDailyPassPrunesAlertEvaluations(t *testing.T) {
+	_, reg, r := setup(t, map[string]string{"RETENTION_ARCHIVED_DAYS": "0"}, jobsProjectSpecs)
+	st := &passOnlyStore{}
+	r = New(st, r.cfg, reg, nil, slog.Default(), r.now)
+	r.RunDailyPass(context.Background())
+	want := "PruneAlertEvaluations " + r.now().AddDate(0, 0, -store.AlertEvaluationDays).Format(time.RFC3339)
+	if !slices.Contains(st.calls, want) {
+		t.Errorf("store calls = %v, want %q among them", st.calls, want)
+	}
+}
+
+// TestRunDailyPassSignalsItsDay: OnPassDone's function runs once per pass,
+// with the pass's day, after the purge and the prune.
+func TestRunDailyPassSignalsItsDay(t *testing.T) {
+	_, reg, r := setup(t, jobsVars, jobsProjectSpecs)
+	st := &passOnlyStore{}
+	r = New(st, r.cfg, reg, nil, slog.Default(), r.now)
+	var days []civil.Date
+	var seen []string
+	r.OnPassDone(func(d civil.Date) { days = append(days, d); seen = slices.Clone(st.calls) })
+	r.RunDailyPass(context.Background())
+	if len(days) != 1 || days[0] != civil.Today(r.now()) {
+		t.Fatalf("days = %v, want one: %v", days, civil.Today(r.now()))
+	}
+	for _, c := range []string{"PurgeArchived", "PruneAlertEvaluations 2025-07-18T04:00:00Z"} {
+		if !slices.Contains(seen, c) {
+			t.Errorf("%q had not run when the signal came: %v", c, seen)
+		}
 	}
 }

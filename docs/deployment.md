@@ -156,7 +156,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `RETENTION_DAYS` | Days the raw event files under `DATA_DIR` are kept, in whole months: a month file is deleted once its last day is older. At least 1. Default 400. |
 | `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `ATTRIBUTION_DAYS` | How far before a form submission its source is looked for: the submitter's last visit with a referrer or a UTM that started within that many days (`docs/twillingate.md`, "Form submissions"). Read when a submission is attributed, about a minute after it arrives. From 1 to `RETENTION_DAYS`. Default 7, or `RETENTION_DAYS` when that is smaller. |
-| `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget, a widget share, a form (with its submissions) or a form submission is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
+| `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget, a widget share, a form (with its submissions), a form submission or an alert (with its evaluations) is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
 | `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
 | `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links and the MCP address on the console's empty Projects page are built on it. Defaults to `INGEST_URL`. |
@@ -170,7 +170,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `MONITOR_TIMEOUT` | Seconds a site has to answer before the check counts as down; default 5, 1 to 60, below `MONITOR_INTERVAL`. Also the limit of the daily certificate read; the domain lookup keeps its own. |
 | `MONITOR_DISABLED` | `true` stops all monitoring: no check runs, no row is written, and a check on demand is refused (`list_monitors` says `paused`). Monitors can still be edited, and a manual check left pending is ended as one that did not run. Default `false`. |
 | `NOTIFY_URL` | The one channel [notifications](#notifications) are sent to, as a URL in one of the formats below. Unset, they stay in the console's inbox only. A URL that does not parse refuses the boot; the error names the problem, never the URL. It holds secrets: keep it in `twillingate.env`, not in a unit file or a shell history. Default empty. |
-| `NOTIFY_REMIND_HOURS` | Hours between the reminders of a site still down, or a certificate or domain still failing; whole hours, 1 to 168, default 4. |
+| `NOTIFY_REMIND_HOURS` | Hours between the reminders of a site still down, a certificate or domain still failing, or a silence alert still breached; whole hours, 1 to 168, default 4. |
 | `NOTIFY_BRIEF_OUTAGE_SECONDS` | An outage shorter than this, from the first failed check to the good one, is one `uptime_blip` notification ("was down for 45s") instead of a down and an up; the down waits until this long after the first failed check (or up to a minute more, when no check comes sooner). Whole seconds, 0 to 3600, default 60; 0 sends down and up for every outage. It only matters when checks of an origin come closer together than this (a short `MONITOR_INTERVAL`, a check on demand): with the default interval the second failed check already comes after it. |
 
 Day counts end in `_DAYS` and take a whole number; every other time
@@ -682,7 +682,7 @@ Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.
 The daily pass runs at 03:00 UTC: it archives the widget shares and draft
 forms past their date, purges what was archived `RETENTION_ARCHIVED_DAYS`
-ago, runs an incremental vacuum and records the daily history in
+ago, prunes alert evaluations older than 400 days, runs an incremental vacuum and records the daily history in
 `usage_history` (the database's size and, in the process that keeps the
 event files, each project's file bytes, per day, which `usage` reads). The
 database holds no events, so nothing is rolled up. The visitor salt

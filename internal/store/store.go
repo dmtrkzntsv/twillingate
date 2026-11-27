@@ -399,6 +399,39 @@ type Store interface {
 	// ends it unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
 	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a AuditEntry) error
 	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error
+	// Alerts (migration 052), every mutation audited in its transaction.
+	// CreateAlert refuses a taken live name and a project already holding max
+	// live alerts with ErrConflict, an unknown project with ErrNotFound; the new
+	// alert asks for a check at now. UpdateAlert changes the alert's name,
+	// definition, pause or snooze: a change to the last three resets what the
+	// evaluations left and bumps the revision; an edit that changes nothing
+	// writes nothing; an archived alert is ErrInvalid. SetAlertArchived
+	// archives or restores (a restore refuses like CreateAlert). Neither leaves
+	// a check request that nothing would serve. RequestAlertCheck asks for a
+	// check at now: false, and nothing written, while one is pending; ErrInvalid
+	// for an alert the runner would not evaluate.
+	CreateAlert(ctx context.Context, a Alert, max int, now time.Time, au AuditEntry) (Alert, error)
+	GetAlert(ctx context.Context, projectID, id int64) (Alert, error)
+	ListAlerts(ctx context.Context, projectID int64, archived bool) ([]Alert, error)
+	UpdateAlert(ctx context.Context, projectID, id int64, e AlertEdit, now time.Time, au AuditEntry) (Alert, error)
+	SetAlertArchived(ctx context.Context, projectID, id int64, archived bool, max int, now time.Time, au AuditEntry) (Alert, error)
+	RequestAlertCheck(ctx context.Context, projectID, id int64, now time.Time, au AuditEntry) (Alert, bool, error)
+	// RecordAlertEvaluation stores r.Eval in the alert's history and writes
+	// its outcome to the row, in one transaction, only while the alert is
+	// live at r.Revision in a live project; otherwise it writes nothing and
+	// reports false. ListAlertEvaluations lists newest first, the ones with
+	// an id below before when it is > 0. RecentAlertEvaluations maps each
+	// alert to its n newest (none: absent). ListEvaluableAlerts lists the
+	// live alerts of live projects, paused and snoozed included;
+	// ListCheckPendingAlerts those of them whose check is pending
+	// (Alert.CheckPending). PruneAlertEvaluations deletes
+	// the evaluations made before the given time and counts them.
+	RecordAlertEvaluation(ctx context.Context, r AlertResult) (bool, error)
+	ListAlertEvaluations(ctx context.Context, alertID int64, limit int, before int64) ([]AlertEvaluation, error)
+	RecentAlertEvaluations(ctx context.Context, ids []int64, n int) (map[int64][]AlertEvaluation, error)
+	ListEvaluableAlerts(ctx context.Context) ([]Alert, error)
+	ListCheckPendingAlerts(ctx context.Context) ([]Alert, error)
+	PruneAlertEvaluations(ctx context.Context, before time.Time) (int, error)
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

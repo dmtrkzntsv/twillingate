@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/alerts"
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
@@ -179,7 +181,32 @@ func newBareHost(t *testing.T) *host {
 	testDBPaths[h] = path
 	h.events = h.newHostEventCount()
 	h.ops.Presence = hostPresence{files, nat}
+	h.alerts = alerts.NewOps(st, testProjects{reg}, nat, hostPresence{files, nat})
 	return h
+}
+
+// testProjects is alerts.Projects over the registry, as app's adapter is
+// (which api cannot import).
+type testProjects struct{ reg *manage.Registry }
+
+func (p testProjects) Project(ctx context.Context, id int64) (string, bool, bool) {
+	pr := p.reg.Snapshot(ctx).Project(id)
+	if pr == nil {
+		return "", false, false
+	}
+	return pr.Name, pr.Archived, true
+}
+
+func (p testProjects) ResolveEvent(ctx context.Context, projectID int64, family store.Family, name string) (string, bool) {
+	return p.reg.Snapshot(ctx).ResolveEvent(projectID, family, name)
+}
+
+func (p testProjects) ResolveAttribute(ctx context.Context, projectID int64, key string) (string, bool) {
+	return p.reg.Snapshot(ctx).ResolveAttribute(projectID, key)
+}
+
+func (p testProjects) Rules(ctx context.Context) archive.Rules {
+	return p.reg.Snapshot(ctx).Rules()
 }
 
 // seedDB copies a migrated database (see storetest) and returns its

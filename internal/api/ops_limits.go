@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/alerts"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -17,10 +18,11 @@ import (
 const (
 	groupRetention = "retention"
 	groupIngest    = "ingest"
+	groupAlerts    = "alerts"
 )
 
 type limitOut struct {
-	Group       string   `json:"group" jsonschema:"retention or ingest"`
+	Group       string   `json:"group" jsonschema:"retention, ingest or alerts"`
 	Name        string   `json:"name" jsonschema:"what is limited, for people"`
 	Setting     string   `json:"setting,omitempty" jsonschema:"the environment variable that sets it; absent for a fixed limit"`
 	Value       float64  `json:"value" jsonschema:"the limit in force, in unit"`
@@ -59,15 +61,15 @@ func fixed(name string, value float64, unit, description string) limitOut {
 }
 
 // limitsFrom reads the limits in force from the running config, in the
-// order the console shows them: retention, the late window, then the wire
-// format's fixed limits.
+// order the console shows them: retention, the late window, the wire
+// format's fixed limits, then the live-alert cap.
 func limitsFrom(cfg *config.Config) []limitOut {
 	ret := cfg.Retention
 	return []limitOut{
 		setting(groupRetention, "Event files", "RETENTION_DAYS", ret.Days, config.DefaultRetentionDays, "days", "",
 			"the event files under DATA_DIR are kept this long, in whole months, then deleted"),
 		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
-			"an archived project (with its data), dashboard, widget, form or form submission is deleted this long after archiving"),
+			"an archived project (with its data), dashboard, widget, form, form submission or alert (with its evaluations) is deleted this long after archiving"),
 		setting(groupRetention, "Form drafts", "RETENTION_FORMS_DRAFT_DAYS", cfg.Forms.DraftDays, config.DefaultFormDraftDays, "days", "",
 			"a form created by its first submission accepts submissions as a draft this long, then is archived unless approved"),
 		setting(groupIngest, "Late events", "INGEST_LATE_DAYS", cfg.IngestLateDays, config.DefaultIngestLateDays, "days", "",
@@ -83,6 +85,8 @@ func limitsFrom(cfg *config.Config) []limitOut {
 		fixed("Form fields", wire.MaxFormFields, "", "fields past this many, in name order, are dropped"),
 		fixed("Form field name length", wire.MaxFormFieldName, "characters", "a field with a longer name is dropped"),
 		fixed("Form value length", wire.MaxFormValue, "bytes", "a longer field value is truncated, not rejected"),
+		{Group: groupAlerts, Name: "Live alerts per project", Value: alerts.MaxLive,
+			Description: "create_alert and restore_alert refuse past it (conflict); archive one first"},
 	}
 }
 
