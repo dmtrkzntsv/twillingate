@@ -37,6 +37,8 @@ jobs:
     # A manual run from another branch must not put that branch on edge.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.describe.outputs.sha }}
     steps:
       # main's head rather than the commit that started the run, so a re-run
       # of an old run never moves edge backward. Full history with tags: the
@@ -52,7 +54,9 @@ jobs:
       # VERSION explicitly, without the Makefile default's --dirty: a file
       # the build leaves behind must not mark the binaries.
       - id: describe
-        run: echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - run: make ship-dist VERSION="$EDGE_VERSION"
         env:
           EDGE_VERSION: ${{ steps.describe.outputs.version }}
@@ -82,13 +86,27 @@ jobs:
       # For the Makefile only; nothing here is built or run from the tree.
       - uses: actions/checkout@v4
         with: { ref: main }
-      - uses: actions/download-artifact@v4
+      # A re-run of this job alone would publish the folder an earlier
+      # attempt built. Once main has moved past it, a newer run owns edge.
+      - id: head
+        env:
+          BUILT: ${{ needs.build.outputs.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$BUILT" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main has moved past $BUILT, which this run built; leaving edge to the newer run."
+          fi
+      - if: steps.head.outputs.current == 'true'
+        uses: actions/download-artifact@v4
         with: { name: ship, path: dist/ship }
-      - uses: dmtrkzntsv/ship@v0
+      - if: steps.head.outputs.current == 'true'
+        uses: dmtrkzntsv/ship@v0
       # No VERSION here, on the command line or in the environment: make
       # ship-publish passes --version for one given either way, and that
       # would publish an immutable version. This moves the channel only.
-      - run: make ship-publish CHANNELS=edge
+      - if: steps.head.outputs.current == 'true'
+        run: make ship-publish CHANNELS=edge
         env:
           SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
