@@ -1,0 +1,113 @@
+name: edge
+# Every push to main moves the `edge` channel of the ship bucket on R2 to
+# main's head, so `ship install twillingate --version edge` runs what is
+# merged before a release is cut. The plain binaries with ship's unit
+# template and env example only (dist/ship/, as release.yml's r2 job
+# publishes): no tag, no GitHub release, no tarballs, no image, and no
+# immutable ship version, so edge builds never count against the versions
+# ship keeps.
+#
+# The test suites do not run here: a squash merge lands the tree its pull
+# request already tested (ci.yml), and the race suite still gates a release.
+# Only the smoke test does (scripts/smoke.sh), so a binary that cannot start
+# or ingest never reaches the channel.
+on:
+  push:
+    branches: [main]
+    # Neither reaches the binary. The rest of docs/ is embedded and served
+    # over MCP, so it counts.
+    paths-ignore:
+      - 'docs/superpowers/**'
+      - '.claude/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+# A newer push supersedes a build in flight: only main's head is worth
+# publishing. The ref is in the group so that a manual run from another
+# branch, which publishes nothing, cannot cancel main's.
+concurrency:
+  group: edge-${{ github.ref }}
+  cancel-in-progress: true
+# Two jobs, as in release.yml: build runs the repository's build code and
+# its dependencies and holds no secret; publish holds the R2 credentials and
+# runs only make and ship over the folder build staged.
+jobs:
+  build:
+    name: build
+    # A manual run from another branch must not put that branch on edge.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.describe.outputs.sha }}
+    steps:
+      # main's head rather than the commit that started the run, so a re-run
+      # of an old run never moves edge backward. Full history with tags: the
+      # binaries report `git describe`, the last release plus the commits
+      # since (v0.27.1-3-g20c3b2f), which tells one edge build from another
+      # and from the release.
+      - uses: actions/checkout@v4
+        with: { ref: main, fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      # VERSION explicitly, without the Makefile default's --dirty: a file
+      # the build leaves behind must not mark the binaries.
+      - id: describe
+        run: |
+          echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: make ship-dist VERSION="$EDGE_VERSION"
+        env:
+          EDGE_VERSION: ${{ steps.describe.outputs.version }}
+      - name: runtime check
+        shell: bash
+        env:
+          EDGE_VERSION: ${{ steps.describe.outputs.version }}
+        run: |
+          file dist/ship/twillingate-linux-* | tee -a "$GITHUB_STEP_SUMMARY"
+          for arch in amd64 arm64; do
+            file "dist/ship/twillingate-linux-$arch" | grep -q 'statically linked'
+          done
+          dist/ship/twillingate-linux-amd64 version | tee -a "$GITHUB_STEP_SUMMARY" | grep -qF "$EDGE_VERSION"
+          SMOKE_BIN="$PWD/dist/ship/twillingate-linux-amd64" ./scripts/smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ship
+          path: dist/ship/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: publish edge to R2
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # For the Makefile only; nothing here is built or run from the tree.
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      # A re-run of this job alone would publish the folder an earlier
+      # attempt built. Once main has moved past it, a newer run owns edge.
+      - id: head
+        env:
+          BUILT: ${{ needs.build.outputs.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$BUILT" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main has moved past $BUILT, which this run built; leaving edge to the newer run."
+          fi
+      - if: steps.head.outputs.current == 'true'
+        uses: actions/download-artifact@v4
+        with: { name: ship, path: dist/ship }
+      - if: steps.head.outputs.current == 'true'
+        uses: dmtrkzntsv/ship@v0
+      # No VERSION here, on the command line or in the environment: make
+      # ship-publish passes --version for one given either way, and that
+      # would publish an immutable version. This moves the channel only.
+      - if: steps.head.outputs.current == 'true'
+        run: make ship-publish CHANNELS=edge
+        env:
+          SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

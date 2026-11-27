@@ -86,7 +86,7 @@ marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
 `shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
-input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
+input; blank means next patch). Pushing to `main` publishes no release, only the `edge` channel (below). Pre-1.0:
 breaking changes bump the minor. The workflow has six jobs: `version`
 settles the tag (the input, or the next patch) and refuses a malformed or
 existing one; then three run side by side: `build` cross-compiles both
@@ -102,6 +102,15 @@ by `make ship-dist`, which `make dist` runs first) to `ship publish` as the
 version and `latest`; it can be re-run alone. A failure before `release` publishes nothing, and a `dry_run` dispatch
 stops before `release`. Several commits
 can ship under one version; notes are not hand-edited.
+
+Every push to `main` (but one touching only `docs/superpowers/` or
+`.claude/`) runs `.github/workflows/edge.yml`, which moves the `edge` channel
+of the ship bucket to main's head (`make ship-dist`, then `make ship-publish
+CHANNELS=edge`): `ship install twillingate --version edge`. It publishes
+`dist/ship/` only: no tag, no GitHub release, no image, no immutable ship
+version, and of the tests it runs only `scripts/smoke.sh`. An edge binary reports `git describe`
+(`v0.27.1-3-g20c3b2f`); `release` dispatches the workflow as its last step,
+so after a release edge describes itself from the new tag.
 
 ## Checks
 
