@@ -10,7 +10,7 @@ import { useAlertActions } from '@/hooks/use-alert-actions'
 import { useNow } from '@/hooks/use-now'
 import { addEdits, draftWith, type DraftEdits } from '@/lib/alert-draft'
 import { describeCondition, stateLabel } from '@/lib/alerts'
-import type { Alert, Project } from '@/lib/api'
+import { endpoints, type Alert, type Project } from '@/lib/api'
 import { ALERTS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { alertsQuery } from '@/lib/queries'
 import { formatAgo } from '@/lib/units'
@@ -69,15 +69,33 @@ function pollWhilePending(id: number) {
 }
 
 /**
- * Toasts `Checked: <state>` when the alert's pending check clears, if this
- * page asked for it (`actions.asked`, the request time still the alert's
- * `check_requested_at`) and it was served (`last_evaluated_at` set again); a
- * check asked for elsewhere (a request another client made since this
- * page's included), one pending when the page opened, or one dropped unrun
- * (a pause, a snooze or an archive from another client, which leave the
- * alert never evaluated) clears quietly.
+ * Toasts a failed check: `Check failed: <why>`, the error of evaluation `at`
+ * read from the alert's history (the list answer carries only the outcome),
+ * or a bare `Check failed` when that read fails or has no text.
  */
-function useCheckedToast(alert: Alert | undefined, asked: (id: number) => string | undefined, forget: (id: number) => void) {
+async function toastCheckFailed(projectId: number, id: number, at: string) {
+  let why = ''
+  try {
+    const page = await endpoints.alertHistory(projectId, id, undefined, 1)
+    why = page.evaluations.find((e) => e.at === at)?.error ?? ''
+  } catch {
+    // The failure is still said; the History section says its own read failed.
+  }
+  toast.error(why ? `Check failed: ${why}` : 'Check failed')
+}
+
+/**
+ * Toasts the result when the alert's pending check clears, if this page
+ * asked for it (`actions.asked`, the request time still the alert's
+ * `check_requested_at`) and it was served (`last_evaluated_at` set again):
+ * `Check failed: <why>` when its evaluation (the newest of `recent`) is an
+ * error, which leaves the state as it was, else `Checked: <state>`. A check
+ * asked for elsewhere (a request another client made since this page's
+ * included), one pending when the page opened, or one dropped unrun (a
+ * pause, a snooze or an archive from another client, which leave the alert
+ * never evaluated) clears quietly.
+ */
+function useCheckedToast(projectId: number, alert: Alert | undefined, asked: (id: number) => string | undefined, forget: (id: number) => void) {
   const wasPending = useRef(false)
   useEffect(() => {
     if (!alert) return
@@ -90,8 +108,11 @@ function useCheckedToast(alert: Alert | undefined, asked: (id: number) => string
     const request = asked(alert.id)
     if (request === undefined) return
     forget(alert.id)
-    if (request === alert.check_requested_at && alert.last_evaluated_at) toast(`Checked: ${stateLabel(alert.state)}`)
-  }, [alert, asked, forget])
+    if (request !== alert.check_requested_at || !alert.last_evaluated_at) return
+    const newest = alert.recent[0]
+    if (newest?.outcome === 'error') void toastCheckFailed(projectId, alert.id, newest.at)
+    else toast(`Checked: ${stateLabel(alert.state)}`)
+  }, [projectId, alert, asked, forget])
 }
 
 /**
@@ -116,7 +137,7 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
   const lookArchived = valid && live.data !== undefined && inLive === undefined
   const archived = useQuery({ ...alertsQuery(projectId, true), enabled: lookArchived, refetchInterval: pollWhilePending(id) })
   const alert = inLive ?? (lookArchived ? archived.data?.alerts.find((a) => a.id === id) : undefined)
-  useCheckedToast(alert, actions.asked, actions.forget)
+  useCheckedToast(projectId, alert, actions.asked, actions.forget)
   // The inputs the editor touched (a template's fields key by key), on the
   // alert they were touched on; the rest follow the saved alert, so a
   // refetch that brings another edit shows it rather than a save sending the

@@ -120,6 +120,55 @@ describe('AlertActions', () => {
     }
   })
 
+  it.each<[string, () => void, string]>([
+    [
+      'with the error its history holds',
+      () =>
+        vi.spyOn(endpoints, 'alertHistory').mockResolvedValue({
+          evaluations: [
+            { id: 31, at: '2026-11-26T10:01:00Z', from: '2026-11-25', to: '2026-11-25', value: null, compare: null, volume: null, outcome: 'error', error: 'the event files could not be read' },
+          ],
+        }),
+      'Check failed: the event files could not be read',
+    ],
+    ['bare when its history cannot be read', () => vi.spyOn(endpoints, 'alertHistory').mockRejectedValue(new ApiError(500, 'internal error', 'internal')), 'Check failed'],
+  ])('says a served check failed, not the state it left as it was: %s', async (_what, history, said) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      history()
+      const { lists } = serveAlerts([alert({ id: 7 })])
+      vi.spyOn(endpoints, 'checkAlert').mockImplementation(async () => {
+        const pending = alert({ id: 7, check_pending: true, check_requested_at: '2026-11-26T10:00:00Z', last_evaluated_at: '' })
+        lists.live = [pending]
+        return pending
+      })
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTimeAsync })
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Check now' }))
+      await screen.findByRole('button', { name: 'Checking…' })
+      // A runtime failure: an error evaluation recorded, the state still ok.
+      lists.live = [
+        alert({
+          id: 7,
+          state: 'ok',
+          check_requested_at: '2026-11-26T10:00:00Z',
+          last_evaluated_at: '2026-11-26T10:01:00Z',
+          recent: [
+            { at: '2026-11-26T10:01:00Z', value: null, outcome: 'error' },
+            { at: '2026-11-25T06:00:00Z', value: 120, outcome: 'ok' },
+          ],
+        }),
+      ]
+      await vi.advanceTimersByTimeAsync(2_100)
+      expect(await screen.findByRole('button', { name: 'Check now' })).not.toHaveAttribute('aria-disabled')
+      await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith(said))
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(toast).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('says nothing of a check another client asked for in place of this one between two polls, and forgets this one', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
