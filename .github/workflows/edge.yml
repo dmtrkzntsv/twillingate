@@ -1,0 +1,69 @@
+name: edge
+# Every push to main moves the `edge` channel of the ship bucket on R2 to
+# main's head, so `ship install twillingate --version edge` runs what is
+# merged before a release is cut. The plain binaries with ship's unit
+# template and env example only (dist/ship/, as release.yml's r2 job
+# publishes): no tag, no GitHub release, no tarballs, no image, and no
+# immutable ship version, so edge builds never count against the versions
+# ship keeps.
+#
+# Nothing is tested here: a squash merge lands the tree its pull request
+# already tested (ci.yml), and the race suite still gates a release.
+on:
+  push:
+    branches: [main]
+    # Neither reaches the binary. The rest of docs/ is embedded and served
+    # over MCP, so it counts.
+    paths-ignore:
+      - 'docs/superpowers/**'
+      - '.claude/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+# A newer push supersedes a build in flight: only main's head is worth
+# publishing.
+concurrency:
+  group: edge
+  cancel-in-progress: true
+jobs:
+  publish:
+    name: publish edge to R2
+    # A manual run from another branch must not put that branch on edge.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # Full history with tags: the binaries report `git describe`, the last
+      # release plus the commits since (v0.27.1-3-g20c3b2f), which tells one
+      # edge build from another and from the release.
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: false }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      # VERSION explicitly, without the Makefile default's --dirty: a file
+      # the build leaves behind must not mark the binaries.
+      - id: describe
+        run: echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+      - run: make ship-dist VERSION="$EDGE_VERSION"
+        env:
+          EDGE_VERSION: ${{ steps.describe.outputs.version }}
+      - name: runtime check
+        shell: bash
+        env:
+          EDGE_VERSION: ${{ steps.describe.outputs.version }}
+        run: |
+          file dist/ship/twillingate-linux-* | tee -a "$GITHUB_STEP_SUMMARY"
+          for arch in amd64 arm64; do
+            file "dist/ship/twillingate-linux-$arch" | grep -q 'statically linked'
+          done
+          dist/ship/twillingate-linux-amd64 version | tee -a "$GITHUB_STEP_SUMMARY" | grep -qF "$EDGE_VERSION"
+      - uses: dmtrkzntsv/ship@v0
+      # No VERSION here, on the command line or in the environment: make
+      # ship-publish passes --version for one given either way, and that
+      # would publish an immutable version. This moves the channel only.
+      - run: make ship-publish CHANNELS=edge
+        env:
+          SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

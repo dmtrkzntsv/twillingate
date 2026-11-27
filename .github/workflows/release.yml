@@ -231,6 +231,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      actions: write # dispatch edge.yml
     env:
       TAG: ${{ needs.version.outputs.tag }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/twillingate
@@ -271,6 +272,15 @@ jobs:
         run: |
           docker buildx imagetools create -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
           docker buildx imagetools inspect "$IMAGE:$TAG"
+      # The edge channel was built before this tag existed, so it reports the
+      # previous release plus a commit count. Rebuild it from main's head,
+      # which now describes itself from the new tag. Last, and its failure
+      # takes nothing back: the next push to main moves edge anyway.
+      - name: rebuild edge
+        continue-on-error: true
+        run: gh workflow run edge.yml --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   # The plain binaries, the unit template and the env example to R2 with
   # ship (`make ship-publish`, as from a laptop), as the version and `latest`.
