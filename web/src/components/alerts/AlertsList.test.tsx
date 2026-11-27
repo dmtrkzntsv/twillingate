@@ -44,13 +44,14 @@ describe('AlertsList', () => {
     expect(endpoints.alerts).toHaveBeenCalledWith(1, false)
   })
 
-  it('says agents make alerts when the project has none', async () => {
+  it('offers a template or an agent when the project has none', async () => {
     vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [] })
     renderList()
     const empty = await screen.findByRole('region', { name: 'No alerts yet' })
     expect(empty).toHaveTextContent(
-      'Alerts are made by an agent connected over MCP. Ask it, for example, to alert you when signups drop 30% against the week before.'
+      'Create one from a template, or ask an agent connected over MCP: for example, to alert you when signups drop 30% against the week before.'
     )
+    expect(within(empty).getByRole('button', { name: 'New alert' })).toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Alerts' })).toBeNull()
   })
 

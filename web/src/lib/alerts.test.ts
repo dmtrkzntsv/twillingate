@@ -10,6 +10,8 @@ import {
   describeSource,
   formatAlertValue,
   inputToThreshold,
+  warningsText,
+  warningText,
   snoozeUntil,
   stateLabel,
   takesMinVolume,
@@ -292,5 +294,18 @@ describe('checkBlocked', () => {
   })
   it('is null for an alert that may be checked', () => {
     expect(checkBlocked(alert({ state: 'breached' }))).toBeNull()
+  })
+})
+
+describe('warningText', () => {
+  const never = (name: string) => `\`${name}\` has never been sent by this project; the alert reads no_data until it is`
+  it('says an event the project never sent as Never sent yet, any other warning as the server words it', () => {
+    expect(warningText(never('signup'))).toBe('Never sent yet: signup')
+    expect(warningText('something else')).toBe('something else')
+  })
+  it('joins the events never sent into one line, the other warnings after it', () => {
+    expect(warningsText([never('signup'), 'something else', never('paid')])).toEqual(['Never sent yet: signup, paid', 'something else'])
+    expect(warningsText(['something else'])).toEqual(['something else'])
+    expect(warningsText([])).toEqual([])
   })
 })

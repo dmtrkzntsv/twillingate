@@ -186,3 +186,21 @@ export function checkBlocked(a: Pick<Alert, 'archived_at' | 'paused' | 'state'>,
   if (a.state === 'snoozed') return 'Snoozed alerts are not checked'
   return null
 }
+
+/** The event a create's or a save's warning says the project has never sent; null for any other warning. */
+function neverSentEvent(w: string): string | null {
+  return /^`([^`]+)` has never been sent/.exec(w)?.[1] ?? null
+}
+
+/** A warning as the console says it: `Never sent yet: <name>` for an event the project never sent, any other as the server words it. */
+export function warningText(w: string): string {
+  const name = neverSentEvent(w)
+  return name === null ? w : `Never sent yet: ${name}`
+}
+
+/** The warnings as the console says them in a few lines: the events the project never sent in one (`Never sent yet: signup, paid`), then each other as the server words it. */
+export function warningsText(warnings: string[]): string[] {
+  const names = warnings.map(neverSentEvent).filter((n): n is string => n !== null)
+  const others = warnings.filter((w) => neverSentEvent(w) === null)
+  return names.length > 0 ? [`Never sent yet: ${names.join(', ')}`, ...others] : others
+}

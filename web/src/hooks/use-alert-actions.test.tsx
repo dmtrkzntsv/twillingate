@@ -172,4 +172,34 @@ describe('useAlertActions', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['alerts', 1] })
     expect(result.current.asked(7)).toBeUndefined()
   })
+
+  it('creates an alert into the live list, in name order, and refetches the lists', async () => {
+    const made = alert({ id: 12, name: 'Paid' })
+    vi.spyOn(endpoints, 'createAlert').mockResolvedValue(made)
+    const { client, result } = setup({ live: list(alert({ id: 7, name: 'Activations' }), alert({ id: 8, name: 'Signups' })) })
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const body = { name: 'Paid', template: 'event_count' as const, fields: { event: 'paid' }, condition: { type: 'threshold' as const, op: 'below' as const, value: 5 }, window_days: 1 }
+    let answer: unknown
+    await act(async () => {
+      answer = await result.current.create(body)
+    })
+    expect(answer).toEqual(made)
+    expect(endpoints.createAlert).toHaveBeenCalledWith(1, body)
+    expect(client.getQueryData<AlertsResponse>(LIVE)?.alerts.map((a) => a.id)).toEqual([7, 12, 8])
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['alerts', 1] })
+  })
+
+  it("hands a create's refusal to onRefusal instead of a toast, and resolves null", async () => {
+    const err = new ApiError(409, 'an alert named Paid exists', 'conflict')
+    vi.spyOn(endpoints, 'createAlert').mockRejectedValue(err)
+    const { result } = setup({ live: list() })
+    const onRefusal = vi.fn()
+    let answer: unknown
+    await act(async () => {
+      answer = await result.current.create({ name: 'Paid', template: 'no_events', fields: { event: 'paid' }, condition: { type: 'silence', hours: 6 } }, { onRefusal })
+    })
+    expect(answer).toBeNull()
+    expect(onRefusal).toHaveBeenCalledWith(err)
+    expect(toast.error).not.toHaveBeenCalled()
+  })
 })

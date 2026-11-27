@@ -4,17 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { AlertActions } from '@/hooks/use-alert-actions'
 import { draftErrors, draftOf, patchOf, templateFieldErrors, type AlertDraft, type DraftEdits } from '@/lib/alert-draft'
+import { warningText } from '@/lib/alerts'
 import { ApiError, type Alert } from '@/lib/api'
 import { toastError } from '@/lib/toast-error'
 import ConditionFields from './ConditionFields'
 import { errorProps, Field } from './Field'
 import TemplateFields from './TemplateFields'
-
-/** A save's warning as the form says it: `Never sent yet: <name>` for an event the project never sent, any other as the server words it. */
-function warningText(w: string): string {
-  const never = /^`([^`]+)` has never been sent/.exec(w)
-  return never ? `Never sent yet: ${never[1]}` : w
-}
 
 interface Props {
   projectId: number
