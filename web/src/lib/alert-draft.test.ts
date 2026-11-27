@@ -227,6 +227,16 @@ describe('draftErrors', () => {
     expect(draftErrors(alert(), { ...draftOf(alert()), minVolume: '0.5' })).toEqual({})
   })
 
+  it.each(['Infinity', '1e400', '-Infinity'])('refuses %s in every numeric input, which a save would send as null', (text) => {
+    const change = alert({ condition: { type: 'change', direction: 'drop', percent: 30, against: 'previous' } })
+    const silence = alert({ kind: 'silence', unit: 'hours', condition: { type: 'silence', hours: 6 }, window_days: 0 })
+    expect(draftErrors(rate(), { ...draftOf(rate()), minVolume: text })).toHaveProperty('minVolume')
+    expect(draftErrors(rate(), { ...draftOf(rate()), value: text })).toHaveProperty('value')
+    expect(draftErrors(change, { ...draftOf(change), percent: text })).toHaveProperty('percent')
+    expect(draftErrors(silence, { ...draftOf(silence), hours: text })).toHaveProperty('hours')
+    expect(draftErrors(alert(), { ...draftOf(alert()), windowDays: text })).toHaveProperty('windowDays')
+  })
+
   it("refuses a template's missing event", () => {
     const a = template()
     expect(draftErrors(a, { ...draftOf(a), fields: { event: '' } })).toHaveProperty('fields')

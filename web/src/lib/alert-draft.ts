@@ -162,7 +162,8 @@ export function draftErrors(a: Alert, d: AlertDraft): DraftErrors {
   if (hasWindow(d) && !whole(num(d.windowDays), 1, 30)) errs.windowDays = 'Enter whole days from 1 to 30'
   if (draftTakesMinVolume(a, d)) {
     const v = num(d.minVolume)
-    if (!(v === 0 || v >= 1)) errs.minVolume = '0 for none, or at least 1'
+    // Infinity (`1e400` included) is at least 1, but a save would send it as null.
+    if (!(v === 0 || (Number.isFinite(v) && v >= 1))) errs.minVolume = '0 for none, or at least 1'
   }
   if (a.template && REQUIRED_EVENTS[a.template].some((k) => !d.fields[k])) errs.fields = 'Choose an event'
   return errs
