@@ -290,9 +290,11 @@ test('the New alert wizard shows the pointer on every step', async ({ page, requ
     expect(await withoutPointer(page), 'step 1: templates and Cancel').toEqual([])
     await dialog.getByRole('button', { name: /^Event count/ }).click()
     await expect(dialog.getByText('Step 2 of 3')).toBeVisible()
-    expect(await withoutPointer(page), 'step 2: Back and Next').toEqual([])
     await dialog.getByLabel('Event', { exact: true }).selectOption('$page_view')
     await dialog.getByLabel('Threshold', { exact: true }).fill('0.5')
+    // Filled first: a disabled Next is not checked.
+    await expect(dialog.getByRole('button', { name: 'Next' })).toBeEnabled()
+    expect(await withoutPointer(page), 'step 2: Back and Next').toEqual([])
     await dialog.getByRole('button', { name: 'Next' }).click()
     await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Create alert' })).toBeEnabled()
