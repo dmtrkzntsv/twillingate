@@ -240,7 +240,7 @@ func TestEvaluateNeverFilterNeedsNoPresence(t *testing.T) {
 	wantOutcome(t, h.evaluate(a), store.AlertBreached, "")
 
 	h.projects.renames[ruleKey(store.FamilyProduct, "refund")] = "refunded"
-	wantOutcome(t, h.evaluate(a), store.AlertBroken, "Renamed to refunded: refund")
+	wantOutcome(t, h.evaluate(a), store.AlertBroken, "A rule renamed refund to refunded")
 }
 
 // TestEvaluatePresenceFailureIsError: a value of 0 or none whose
@@ -509,7 +509,7 @@ func TestEvaluateRenamedIsBroken(t *testing.T) {
 	h := newEvalHarness()
 	h.projects.renames[ruleKey(store.FamilyProduct, "signup")] = "sign_up"
 	o := h.evaluate(countAlert(t, below5, 3))
-	wantOutcome(t, o, store.AlertBroken, "Renamed to sign_up: signup")
+	wantOutcome(t, o, store.AlertBroken, "A rule renamed signup to sign_up")
 	if len(h.eng.reqs) != 0 {
 		t.Errorf("%d requests, want none", len(h.eng.reqs))
 	}
@@ -521,7 +521,7 @@ func TestEvaluateRenamedIsBroken(t *testing.T) {
 func TestEvaluateBlockedIsBroken(t *testing.T) {
 	h := newEvalHarness()
 	h.projects.blocked[ruleKey(store.FamilyMeasures, "signup")] = true
-	wantOutcome(t, h.evaluate(countAlert(t, below5, 1)), store.AlertBroken, "Blocked: signup")
+	wantOutcome(t, h.evaluate(countAlert(t, below5, 1)), store.AlertBroken, "A rule blocked signup")
 
 	// A $ event takes no rules.
 	h2 := newEvalHarness()
@@ -543,11 +543,11 @@ func TestEvaluateAttributeRuleIsBroken(t *testing.T) {
 	wantOutcome(t, h.evaluate(a), store.AlertBreached, "")
 
 	h.projects.attrRenames = map[string]string{"plan": "tier"}
-	wantOutcome(t, h.evaluate(a), store.AlertBroken, "Renamed to attr_tier: attr_plan")
+	wantOutcome(t, h.evaluate(a), store.AlertBroken, "A rule renamed attr_plan to attr_tier")
 
 	h.projects.attrRenames = nil
 	h.projects.attrBlocked = map[string]bool{"plan": true}
-	wantOutcome(t, h.evaluate(a), store.AlertBroken, "Blocked: attr_plan")
+	wantOutcome(t, h.evaluate(a), store.AlertBroken, "A rule blocked attr_plan")
 	if n := len(h.eng.reqs); n != 1 {
 		t.Errorf("%d requests, want only the first evaluation's", n)
 	}
