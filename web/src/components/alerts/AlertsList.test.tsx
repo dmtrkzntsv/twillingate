@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { ApiError, endpoints } from '@/lib/api'
 import { alert, brokenAlert } from '@/test/alerts'
@@ -86,5 +89,28 @@ describe('AlertsList', () => {
     renderList()
     expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the alerts. boom")
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+  it('closes the wizard when it can no longer be shown, so it does not reopen by itself', async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alert()] })
+    const tree = (archived: boolean) => (
+      <MemoryRouter initialEntries={['/projects/1/alerts']}>
+        <Routes>
+          <Route path="/projects/:id/alerts" element={<AlertsList projectId={1} projectArchived={archived} />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    const { client, rerender } = renderWithProviders(tree(false))
+    const wrap = (archived: boolean) => (
+      <QueryClientProvider client={client}>
+        <TooltipProvider>{tree(archived)}</TooltipProvider>
+      </QueryClientProvider>
+    )
+    await userEvent.click(await screen.findByRole('button', { name: 'New alert' }))
+    expect(await screen.findByRole('dialog', { name: 'New alert' })).toBeInTheDocument()
+    rerender(wrap(true))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    rerender(wrap(false))
+    await screen.findByRole('button', { name: 'New alert' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

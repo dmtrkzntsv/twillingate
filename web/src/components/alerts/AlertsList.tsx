@@ -81,6 +81,8 @@ export default function AlertsList({ projectId, projectArchived = false }: { pro
   const search = rangeParams(url).toString()
   const alerts = q.data?.alerts
   const canCreate = !archived && !projectArchived
+  // Leaving the Live view (or the project being archived) closes the wizard, so it doesn't reopen on coming back.
+  if (!canCreate && creating) setCreating(false)
   const newAlert = q.data && canCreate && (
     <NewAlertButton maxLive={q.data.max_live} full={q.data.alerts.length >= q.data.max_live} onClick={() => setCreating(true)} />
   )
