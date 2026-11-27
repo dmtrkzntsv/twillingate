@@ -63,9 +63,12 @@ describe('suggestName', () => {
     expect(name).toBe('Count of ' + 'a'.repeat(60))
   })
 
-  it('cuts at the last word boundary even before a long word', () => {
-    const d = drafted('event_count', { value: '5' }, { event: 'x'.repeat(200) })
-    expect(suggestName(d.blank, d.draft)).toBe('Count of')
+  it('cuts hard at 100 characters when a word boundary would keep under 60', () => {
+    const event = 'x'.repeat(200)
+    const d = drafted('event_count', { value: '5' }, { event })
+    const name = suggestName(d.blank, d.draft)
+    expect(Array.from(name)).toHaveLength(100)
+    expect(name.startsWith('Count of xxx')).toBe(true)
   })
 })
 

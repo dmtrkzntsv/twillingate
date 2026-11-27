@@ -11,6 +11,9 @@ type Template = NonNullable<Alert['template']>
 /** The longest alert name the server takes. */
 const NAME_LIMIT = 100
 
+/** The fewest characters a name cut at a word boundary keeps; a shorter one is cut hard instead. */
+const NAME_KEEP = 60
+
 /** The templates a new alert starts from, in the order the wizard offers them. */
 export const TEMPLATES: { id: Template; title: string; description: string }[] = [
   { id: 'event_count', title: 'Event count', description: 'How many times an event happens a day, or over a few days.' },
@@ -72,12 +75,13 @@ export function wizardAlert(blank: Alert, draft: AlertDraft): Alert {
   return { ...blank, fields, read }
 }
 
-/** A name cut to `NAME_LIMIT` characters at a word boundary (hard where the name is one word). */
+/** A name cut to `NAME_LIMIT` characters (code points, as the server counts): at the last word boundary when that keeps at least `NAME_KEEP` of them, else hard. */
 function capName(name: string): string {
-  if (name.length <= NAME_LIMIT) return name
-  const cut = name.slice(0, NAME_LIMIT + 1)
+  const chars = Array.from(name)
+  if (chars.length <= NAME_LIMIT) return name
+  const cut = chars.slice(0, NAME_LIMIT + 1)
   const space = cut.lastIndexOf(' ')
-  return (space > 0 ? cut.slice(0, space) : cut.slice(0, NAME_LIMIT)).trimEnd()
+  return (space >= NAME_KEEP ? cut.slice(0, space) : cut.slice(0, NAME_LIMIT)).join('').trimEnd()
 }
 
 /** The name the wizard offers: what the alert watches and its condition (`Count of signup below 5 over 1 day`), or for no_events `No heartbeat for 6 hours`. */
