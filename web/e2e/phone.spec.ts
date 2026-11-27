@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 import { attributesListed } from './attributes'
-import { createAlert, submitJSON } from './forms'
+import { createAlert, createProject, submitJSON } from './forms'
 import { createShare } from './png'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
@@ -591,6 +591,41 @@ test("the Alerts tab's lists and an alert's page fit a phone", async ({ page, re
     await expect(page.getByRole('heading', { name: liveName })).toBeVisible()
     await expect(page.getByRole('region', { name: 'History' }).locator('tbody tr').first()).toBeVisible()
     expect(await sidewaysScroll(page), path).toEqual([])
+  } finally {
+    await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
+  }
+})
+
+test("the New alert wizard's three steps fit a phone", async ({ page, request }) => {
+  const { id } = await createProject(request, `wizard-${Date.now()} - longer than a phone is wide on one line`, [
+    'https://www.a-long-subdomain.example.com',
+  ])
+  try {
+    await page.goto('/app/')
+    await page.waitForURL(/\/oauth\/authorize\?/)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.waitForURL(/\/app\/projects$/)
+    await check(page, `/app/projects/${id}/alerts`)
+
+    await page.getByRole('button', { name: 'New alert' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New alert' })
+    await expect(dialog.getByText('Step 1 of 3')).toBeVisible()
+    expect(await dialogOverflow(page), 'step 1').toEqual([])
+    expect(await sidewaysScroll(page), 'step 1').toEqual([])
+
+    await dialog.getByRole('button', { name: /^Event count/ }).click()
+    await expect(dialog.getByText('Step 2 of 3')).toBeVisible()
+    await dialog.getByLabel('Event', { exact: true }).selectOption('$page_view')
+    await dialog.getByLabel('Threshold', { exact: true }).fill('0.5')
+    expect(await dialogOverflow(page), 'step 2').toEqual([])
+    expect(await sidewaysScroll(page), 'step 2').toEqual([])
+
+    await dialog.getByRole('button', { name: 'Next' }).click()
+    await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
+    await expect(dialog.getByText(/^Would (not )?have fired/)).toBeVisible()
+    expect(await dialogOverflow(page), 'step 3').toEqual([])
+    expect(await sidewaysScroll(page), 'step 3').toEqual([])
   } finally {
     await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
   }
