@@ -51,14 +51,14 @@ function upsert(alerts: Alert[], a: Alert): Alert[] {
 
 /**
  * Every write to one of a project's alerts, its create_alert, each
- * update_alert or its archive, restore or check route. The answered alert goes into the list it
- * now belongs to (the archived one once archived) and out of the other,
- * each only where that list is already loaded, so the page follows at once;
- * then the project's alert lists refetch. A failure toasts its message
- * (or goes to a save's `onRefusal`), refetches the lists too, and resolves
- * null instead of throwing. The page that shows the alert calls
- * this once and hands it down, so a check asked for anywhere on it is the
- * page's to report when it is done (`asked`).
+ * update_alert or its archive, restore or check route. The answered alert
+ * goes into the list it now belongs to (the archived one once archived) and
+ * out of the other, each only where that list is already loaded, so the
+ * page follows at once; then the project's alert lists refetch. A failure
+ * toasts its message (or goes to a save's `onRefusal`), refetches the lists
+ * too, and resolves null instead of throwing. The page that shows the alert
+ * calls this once and hands it down, so a check asked for anywhere on it is
+ * the page's to report when it is done (`asked`).
  */
 export function useAlertActions(projectId: number): AlertActions {
   const client = useQueryClient()
