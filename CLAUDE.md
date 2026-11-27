@@ -108,7 +108,7 @@ Every push to `main` (but one touching only `docs/superpowers/` or
 of the ship bucket to main's head (`make ship-dist`, then `make ship-publish
 CHANNELS=edge`): `ship install twillingate --version edge`. It publishes
 `dist/ship/` only: no tag, no GitHub release, no image, no immutable ship
-version, and it runs no tests. An edge binary reports `git describe`
+version, and of the tests it runs only `scripts/smoke.sh`. An edge binary reports `git describe`
 (`v0.27.1-3-g20c3b2f`); `release` dispatches the workflow as its last step,
 so after a release edge describes itself from the new tag.
 
