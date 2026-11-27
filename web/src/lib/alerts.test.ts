@@ -3,12 +3,14 @@ import type { Alert, AlertCondition } from './api'
 import {
   alertSource,
   breachedSince,
+  checkBlocked,
   conditionTypes,
   describeCondition,
   describeSource,
   formatAlertValue,
   inputToThreshold,
   snoozeUntil,
+  stateLabel,
   takesMinVolume,
   thresholdToInput,
 } from './alerts'
@@ -226,5 +228,31 @@ describe('snoozeUntil', () => {
     expect(snoozeUntil(now, '1h')).toBe('2026-11-26T11:00:00Z')
     expect(snoozeUntil(now, '1d')).toBe('2026-11-27T10:00:00Z')
     expect(snoozeUntil(now, '1w')).toBe('2026-12-03T10:00:00Z')
+  })
+})
+
+describe('stateLabel', () => {
+  it('names each state as the badge does', () => {
+    expect(stateLabel('pending')).toBe('Pending')
+    expect(stateLabel('ok')).toBe('OK')
+    expect(stateLabel('breached')).toBe('Breached')
+    expect(stateLabel('no_data')).toBe('No data')
+    expect(stateLabel('broken')).toBe('Broken')
+    expect(stateLabel('paused')).toBe('Paused')
+    expect(stateLabel('snoozed')).toBe('Snoozed')
+  })
+  it('names a state it does not know as it is sent', () => {
+    expect(stateLabel('muted' as Alert['state'])).toBe('muted')
+  })
+})
+
+describe('checkBlocked', () => {
+  it('says why an archived, paused or snoozed alert is not checked, archived first', () => {
+    expect(checkBlocked(alert({ archived_at: '2026-11-20T10:00:00Z', paused: true }))).toBe('Archived alerts are not checked')
+    expect(checkBlocked(alert({ paused: true, state: 'paused', snoozed_until: '2026-12-01T00:00:00Z' }))).toBe('Paused alerts are not checked')
+    expect(checkBlocked(alert({ state: 'snoozed', snoozed_until: '2026-12-01T00:00:00Z' }))).toBe('Snoozed alerts are not checked')
+  })
+  it('is null for an alert that may be checked', () => {
+    expect(checkBlocked(alert({ state: 'breached' }))).toBeNull()
   })
 })

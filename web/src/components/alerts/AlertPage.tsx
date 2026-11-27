@@ -1,0 +1,138 @@
+import { useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Link, useSearchParams } from 'react-router'
+import { toast } from 'sonner'
+import NotFound from '@/components/NotFound'
+import LoadError from '@/components/projects/LoadError'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useAlertActions } from '@/hooks/use-alert-actions'
+import { useNow } from '@/hooks/use-now'
+import { stateLabel } from '@/lib/alerts'
+import type { Alert, Project } from '@/lib/api'
+import { ALERTS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
+import { alertsQuery } from '@/lib/queries'
+import { formatAgo } from '@/lib/units'
+import AlertActions from './AlertActions'
+import AlertDefinition from './AlertDefinition'
+import AlertStateBadge from './AlertStateBadge'
+
+/** How often the alert lists are read while the alert's check is pending: the runner serves one within a minute. */
+const CHECK_POLL_MS = 2_000
+const DAY_MS = 86_400_000
+
+/** The first day of a window of `days` days that ends on `lastDay` (YYYY-MM-DD, UTC). */
+function firstDay(lastDay: string, days: number): string {
+  return new Date(Date.parse(`${lastDay}T00:00:00Z`) - (days - 1) * DAY_MS).toISOString().slice(0, 10)
+}
+
+/** The muted line under the heading: the last value, when it was checked, the days it read, and when it was archived. */
+function facts(a: Alert, now: number): string {
+  const parts = [`Last value ${a.last_value_text}`]
+  if (a.last_evaluated_at) parts.push(`checked ${formatAgo(a.last_evaluated_at, new Date(now))}`)
+  // A silence alert reads hours, not days; a broken one has no window.
+  if (a.kind !== 'silence' && a.last_day && a.window_days >= 1) parts.push(`days ${firstDay(a.last_day, a.window_days)} to ${a.last_day}`)
+  if (a.archived_at) parts.push(`Archived ${a.archived_at.slice(0, 10)}`)
+  return parts.join(' · ')
+}
+
+/**
+ * Reads the project's alert lists every 2 s while alert `id`'s check is
+ * pending, and not otherwise: the function form, so the list's own answer
+ * turns it off.
+ */
+function pollWhilePending(id: number) {
+  return (query: { state: { data?: { alerts: Alert[] } } }) =>
+    query.state.data?.alerts.some((a) => a.id === id && a.check_pending) ? CHECK_POLL_MS : false
+}
+
+/**
+ * Toasts `Checked: <state>` when the alert's pending check clears, if this
+ * page asked for it (`actions.asked`); a check asked for elsewhere, or one
+ * pending when the page opened, clears quietly.
+ */
+function useCheckedToast(alert: Alert | undefined, asked: (id: number) => boolean, forget: (id: number) => void) {
+  const wasPending = useRef(false)
+  useEffect(() => {
+    if (!alert) return
+    if (alert.check_pending) {
+      wasPending.current = true
+      return
+    }
+    if (!wasPending.current) return
+    wasPending.current = false
+    if (!asked(alert.id)) return
+    forget(alert.id)
+    toast(`Checked: ${stateLabel(alert.state)}`)
+  }, [alert, asked, forget])
+}
+
+/**
+ * One alert's page (`/projects/:id/alerts/:alertId`), a tab of the Alerts
+ * page: its name and state (and why, when broken or without data), a line
+ * of facts, the actions, and what it watches. No route reads a single
+ * alert, so it is found in the live list, else in the archived one; in
+ * neither (purged after archiving, or a wrong link) the page says so.
+ * While a check is pending the lists are read every 2 s.
+ */
+export default function AlertPage({ project, alertId }: { project: Project; alertId: string }) {
+  const projectId = project.project_id
+  const valid = /^\d+$/.test(alertId)
+  const id = Number(alertId)
+  const [url] = useSearchParams()
+  const now = useNow(60_000)
+  const actions = useAlertActions(projectId)
+  const live = useQuery({ ...alertsQuery(projectId, false), enabled: valid, refetchInterval: pollWhilePending(id) })
+  const inLive = live.data?.alerts.find((a) => a.id === id)
+  // The archived list is read only once the live one is known to lack it.
+  const lookArchived = valid && live.data !== undefined && inLive === undefined
+  const archived = useQuery({ ...alertsQuery(projectId, true), enabled: lookArchived, refetchInterval: pollWhilePending(id) })
+  const alert = inLive ?? (lookArchived ? archived.data?.alerts.find((a) => a.id === id) : undefined)
+  useCheckedToast(alert, actions.asked, actions.forget)
+
+  if (!alert) {
+    if (valid && live.error && !live.data) return <LoadError what="the alert" error={live.error} onRetry={() => void live.refetch()} />
+    if (lookArchived && archived.error && !archived.data)
+      return <LoadError what="the alert" error={archived.error} onRetry={() => void archived.refetch()} />
+    // Either list still on its way (a cached one being read afresh included) may yet hold it.
+    if (valid && (!live.data || !archived.data || live.isFetching || archived.isFetching)) return <Skeleton aria-hidden className="h-24 w-full max-w-4xl" />
+    return (
+      <NotFound
+        inPage
+        title="No alert at this address"
+        actions={
+          <Button asChild variant="outline">
+            <Link to={tabPath(projectId, ALERTS_ID, rangeParams(url).toString())}>Go to the alerts</Link>
+          </Button>
+        }
+      >
+        It may have been purged after it was archived, or the link may be wrong.
+      </NotFound>
+    )
+  }
+
+  const showReason = (alert.state === 'broken' || alert.state === 'no_data') && alert.reason
+  return (
+    <div className="grid max-w-4xl min-w-0 grid-cols-1 gap-4">
+      <header className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="min-w-0 truncate text-lg font-semibold">{alert.name}</h2>
+          <span className="shrink-0">
+            <AlertStateBadge alert={alert} />
+          </span>
+        </div>
+        {showReason && (
+          <p className={`text-sm break-words ${alert.state === 'broken' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{alert.reason}</p>
+        )}
+      </header>
+      <p data-testid="alert-facts" className="text-sm break-words text-muted-foreground">
+        {facts(alert, now)}
+      </p>
+      <AlertActions alert={alert} actions={actions} />
+      <AlertDefinition alert={alert} />
+      {/* The editor slot: AlertEditor, Alert settings. */}
+      {/* The backtest slot: AlertBacktest. */}
+      {/* The history slot: AlertHistory. */}
+    </div>
+  )
+}

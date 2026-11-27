@@ -17,6 +17,7 @@ import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
 import { useStuck } from '@/hooks/use-stuck'
 import FormPage from '@/components/forms/FormPage'
 import FormsLanding from '@/components/forms/FormsLanding'
+import AlertPage from '@/components/alerts/AlertPage'
 import AlertsList from '@/components/alerts/AlertsList'
 import { readLastTab } from '@/lib/last-tab'
 import { ALERTS_ID, FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, settingsSection } from '@/lib/project-tabs'
@@ -198,8 +199,11 @@ export default function Project({ tab, landing = false }: { tab?: 'forms' | 'ale
                 <FormPage key={params.name} project={project} name={params.name} />
               )
             ) : dashId === ALERTS_ID ? (
-              // One alert's page comes with AlertPage; until then `/alerts/:alertId` shows the row alone.
-              params.alertId === undefined ? <AlertsList projectId={id} /> : null
+              params.alertId === undefined ? (
+                <AlertsList projectId={id} />
+              ) : (
+                <AlertPage key={params.alertId} project={project} alertId={params.alertId} />
+              )
             ) : tabsQ.error ? (
               <PageError error={tabsQ.error} onRetry={() => void tabsQ.refetch()} bare />
             ) : (

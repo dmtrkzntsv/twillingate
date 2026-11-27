@@ -1,7 +1,7 @@
 // Pure helpers the Alerts tab builds on: values by unit, the threshold input,
 // the alert's definition in words, and the rules the server applies to what a
 // request may carry (docs/twillingate.md, Alerts).
-import type { Alert, AlertCondition, AlertRead, AlertSource, AlertUnit } from './api'
+import type { Alert, AlertCondition, AlertRead, AlertSource, AlertState, AlertUnit } from './api'
 
 const NONE = '—'
 const grouped = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
@@ -143,4 +143,27 @@ const SNOOZE_MS = { '1h': 3_600_000, '1d': 86_400_000, '1w': 7 * 86_400_000 }
 export function snoozeUntil(now: Date, choice: '1h' | '1d' | '1w'): string {
   const end = new Date(now.getTime() + SNOOZE_MS[choice])
   return end.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+const STATE_LABELS: Record<AlertState, string> = {
+  pending: 'Pending',
+  ok: 'OK',
+  breached: 'Breached',
+  no_data: 'No data',
+  broken: 'Broken',
+  paused: 'Paused',
+  snoozed: 'Snoozed',
+}
+
+/** A state as the console names it: `OK`, `No data`, …; a state it does not know yet (a newer server's) as it is sent. */
+export function stateLabel(state: AlertState): string {
+  return STATE_LABELS[state] ?? String(state)
+}
+
+/** Why the server refuses to check an alert now (archived, paused or snoozed, in that order); null when it may be checked. */
+export function checkBlocked(a: Pick<Alert, 'archived_at' | 'paused' | 'state'>): string | null {
+  if (a.archived_at !== '') return 'Archived alerts are not checked'
+  if (a.paused) return 'Paused alerts are not checked'
+  if (a.state === 'snoozed') return 'Snoozed alerts are not checked'
+  return null
 }

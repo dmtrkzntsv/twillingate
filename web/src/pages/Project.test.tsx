@@ -329,6 +329,19 @@ describe('Project', () => {
     expect(screen.getByRole('link', { name: 'Live' })).toHaveAttribute('href', '/projects/4/alerts')
     expect(screen.getByRole('link', { name: 'Back to the dashboards of econumo.com' })).toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Alerts' })).toBeNull()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Signups' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument()
+  })
+
+  it('opens an archived alert from its link, under Archived, with Restore', async () => {
+    vi.spyOn(endpoints, 'alerts').mockImplementation(async (_p: number, archived = false) => ({
+      max_live: 50,
+      alerts: archived ? [alert({ id: 12, project_id: 4, name: 'Old signups', archived_at: '2026-11-20T10:00:00Z' })] : [],
+    }))
+    renderAt('/projects/4/alerts/12')
+    expect(await screen.findByRole('heading', { level: 2, name: 'Old signups' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Archived' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('keeps the Archived badge beside the back button', async () => {

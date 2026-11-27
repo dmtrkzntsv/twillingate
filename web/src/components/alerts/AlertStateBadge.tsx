@@ -1,6 +1,6 @@
 import { BellOffIcon, BellRingIcon, PauseIcon, TriangleAlertIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { breachedSince } from '@/lib/alerts'
+import { breachedSince, stateLabel } from '@/lib/alerts'
 import type { Alert } from '@/lib/api'
 
 const sinceFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
@@ -17,7 +17,7 @@ export default function AlertStateBadge({ alert }: { alert: Alert }) {
     case 'ok':
       return (
         <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400">
-          OK
+          {stateLabel('ok')}
         </Badge>
       )
     case 'breached': {
@@ -25,41 +25,41 @@ export default function AlertStateBadge({ alert }: { alert: Alert }) {
       return (
         <Badge variant="outline" className="border-destructive/40 text-destructive">
           <BellRingIcon aria-hidden />
-          {since ? `Breached since ${sinceFormat.format(new Date(since))}` : 'Breached'}
+          {since ? `${stateLabel('breached')} since ${sinceFormat.format(new Date(since))}` : stateLabel('breached')}
         </Badge>
       )
     }
     case 'no_data':
       return (
         <Badge variant="outline" className="text-muted-foreground">
-          No data
+          {stateLabel('no_data')}
         </Badge>
       )
     case 'broken':
       return (
         <Badge variant="outline" className="border-amber-600/40 text-amber-600 dark:text-amber-400">
           <TriangleAlertIcon aria-hidden />
-          Broken
+          {stateLabel('broken')}
         </Badge>
       )
     case 'paused':
       return (
         <Badge variant="outline">
           <PauseIcon aria-hidden />
-          Paused
+          {stateLabel('paused')}
         </Badge>
       )
     case 'snoozed':
       return (
         <Badge variant="outline">
           <BellOffIcon aria-hidden />
-          {alert.snoozed_until ? `Snoozed until ${untilFormat.format(new Date(alert.snoozed_until))}` : 'Snoozed'}
+          {alert.snoozed_until ? `${stateLabel('snoozed')} until ${untilFormat.format(new Date(alert.snoozed_until))}` : stateLabel('snoozed')}
         </Badge>
       )
     case 'pending':
-      return <Badge variant="outline">Pending</Badge>
+      return <Badge variant="outline">{stateLabel('pending')}</Badge>
     default:
       // A state this console does not know yet (a newer server's) still shows, as it is named.
-      return <Badge variant="outline">{String(alert.state)}</Badge>
+      return <Badge variant="outline">{stateLabel(alert.state)}</Badge>
   }
 }

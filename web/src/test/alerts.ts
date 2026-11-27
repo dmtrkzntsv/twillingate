@@ -1,4 +1,5 @@
-import type { Alert } from '@/lib/api'
+import { vi } from 'vitest'
+import { endpoints, type Alert } from '@/lib/api'
 
 /** An alert as list_alerts answers it: a live, ok stat alert counting events, unless `over` says otherwise. */
 export function alert(over: Partial<Alert> = {}): Alert {
@@ -48,4 +49,18 @@ export function brokenAlert(over: Partial<Alert> = {}): Alert {
     last_value_text: '—',
     ...over,
   })
+}
+
+/**
+ * Answers `endpoints.alerts` from two lists a test may change as it goes, the
+ * live alerts and the archived ones, so the refetch after an action reads
+ * what the server would then hold.
+ */
+export function serveAlerts(live: Alert[], archived: Alert[] = []) {
+  const lists = { live, archived }
+  const spy = vi.spyOn(endpoints, 'alerts').mockImplementation(async (_projectId: number, inArchive = false) => ({
+    max_live: 50,
+    alerts: inArchive ? lists.archived : lists.live,
+  }))
+  return { lists, spy }
 }
