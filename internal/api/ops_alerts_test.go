@@ -154,6 +154,50 @@ func TestPreviewAlertTool(t *testing.T) {
 	}
 }
 
+// A stat alert's query and read, as list_alerts gives them, go back to
+// preview_alert with a condition and a window, as the console's editor
+// previews a change to an alert made from a query: the query as written
+// out (its defaults included) is one preview_alert takes.
+func TestPreviewAlertFromListedQuery(t *testing.T) {
+	h := newBareHost(t)
+	r := newTestRegistrar(t, h)
+	create := `{"name":"Views","query":{"kind":"stat","table":"events","metrics":[{"op":"count"}],"where":[{"column":"event_name","op":"eq","values":["$page_view"]}]},` +
+		`"read":{"metric":"count"},"condition":{"type":"threshold","op":"below","value":1}}`
+	if rec := serveREST(t, r, "POST", "/api/projects/1/alerts", create); rec.Code != http.StatusCreated {
+		t.Fatalf("POST = %d %s", rec.Code, rec.Body)
+	}
+	rec := serveREST(t, r, "GET", "/api/projects/1/alerts", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d %s", rec.Code, rec.Body)
+	}
+	var list struct {
+		Alerts []struct {
+			Query json.RawMessage `json:"query"`
+			Read  json.RawMessage `json:"read"`
+		} `json:"alerts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Alerts) != 1 {
+		t.Fatalf("GET = %s (%v)", rec.Body, err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"query":       list.Alerts[0].Query,
+		"read":        list.Alerts[0].Read,
+		"condition":   map[string]any{"type": "threshold", "op": "below", "value": 200},
+		"window_days": 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = serveREST(t, r, "POST", "/api/projects/1/alerts/preview", string(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview of the listed query and read = %d %s\nbody %s", rec.Code, rec.Body, body)
+	}
+	var out alertPreviewOut
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Days) != 90 {
+		t.Errorf("preview = %d days (%v): %s", len(out.Days), err, rec.Body)
+	}
+}
+
 // The other sources and the edits a template alert does not reach: a
 // silence alert over where, a stat given as query and read, a snooze set
 // and cleared, a pause.
