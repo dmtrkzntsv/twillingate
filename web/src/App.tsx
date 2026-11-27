@@ -139,6 +139,22 @@ function App() {
             }
           />
           <Route
+            path="/projects/:id/alerts"
+            element={
+              <OnlineOnly>
+                <Project tab="alerts" />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/projects/:id/alerts/:alertId"
+            element={
+              <OnlineOnly>
+                <Project tab="alerts" />
+              </OnlineOnly>
+            }
+          />
+          <Route
             path="/inbox"
             element={
               <OnlineOnly>

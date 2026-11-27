@@ -17,8 +17,9 @@ import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
 import { useStuck } from '@/hooks/use-stuck'
 import FormPage from '@/components/forms/FormPage'
 import FormsLanding from '@/components/forms/FormsLanding'
+import AlertsList from '@/components/alerts/AlertsList'
 import { readLastTab } from '@/lib/last-tab'
-import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, settingsSection } from '@/lib/project-tabs'
+import { ALERTS_ID, FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, settingsSection } from '@/lib/project-tabs'
 import { dashboardsQuery, projectActivityQuery, projectsQuery, projectTabsQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
@@ -31,22 +32,25 @@ const LANDING = -2
 /**
  * `/projects/:id` (with `landing`), `/projects/:id/settings` (and
  * `/settings/:section` for each Settings tab), `/projects/:id/forms` (with
- * `tab="forms"`, and `/forms/:name` for one form) and
+ * `tab="forms"`, and `/forms/:name` for one form), `/projects/:id/alerts`
+ * (with `tab="alerts"`, and `/alerts/:alertId` for one alert) and
  * `/projects/:id/dashboards/:dashId`: one project, with its dashboards as
- * tabs (project tabs D1, D8) and Forms and Settings as buttons beside them
- * (project landing D4). On a dashboard the name heads the page and is
- * renamed in place. On Settings and Forms a back button to the dashboards
- * takes its place (or Add dashboard, with none), and the tab row holds the
- * Settings tabs on Settings (project settings tabs) and the project's forms
- * on Forms, where `/forms` lands on the last form opened, else the first; a
- * section the project does not have goes to `/settings`, its first.
+ * tabs (project tabs D1, D8) and Alerts, Forms and Settings as buttons
+ * beside them (project landing D4). On a dashboard the name heads the page
+ * and is renamed in place. On Settings, Forms and Alerts a back button to
+ * the dashboards takes its place (or Add dashboard, with none), and the tab
+ * row holds the Settings tabs on Settings (project settings tabs), the
+ * project's forms on Forms, where `/forms` lands on the last form opened,
+ * else the first, and Live and Archived on Alerts, whose `/alerts` lists
+ * the alerts; a section the project does not have goes to `/settings`, its
+ * first.
  *
  * With `landing`, the page goes to the last tab used here, else the first,
  * else Settings (project landing D3). It draws the page around a skeleton
  * meanwhile, and stays mounted across the redirect, so switching projects
  * does not blank the screen.
  */
-export default function Project({ tab, landing = false }: { tab?: 'forms'; landing?: boolean } = {}) {
+export default function Project({ tab, landing = false }: { tab?: 'forms' | 'alerts'; landing?: boolean } = {}) {
   const params = useParams()
   const [url] = useSearchParams()
   const { search, key: visit } = useLocation()
@@ -55,7 +59,17 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   const param = params.id
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
-  const dashId = landing ? LANDING : tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETTINGS_ID : Number(params.dashId)
+  const dashId = landing
+    ? LANDING
+    : tab === 'forms'
+      ? FORMS_ID
+      : tab === 'alerts'
+        ? ALERTS_ID
+        : params.dashId === undefined
+          ? SETTINGS_ID
+          : Number(params.dashId)
+  // The pages besides the dashboards, headed by the way back to them and with no "No events" notice.
+  const besides = dashId === SETTINGS_ID || dashId === FORMS_ID || dashId === ALERTS_ID
   const { data: dash, error: dashError } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
   const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid })
@@ -117,7 +131,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
           // and no draft or open editor may carry over to the next project.
           <Fragment key={id}>
             <header className="flex min-w-0 items-center gap-2">
-              {dashId === SETTINGS_ID || dashId === FORMS_ID ? (
+              {besides ? (
                 <ProjectBackHeader
                   projectId={id}
                   name={project.name}
@@ -148,6 +162,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 projectId={id}
                 project={project}
                 form={params.name}
+                alert={params.alertId}
                 currentId={dashId}
                 tabs={tabsQ.data?.tabs ?? []}
                 dashboards={dash?.dashboards ?? []}
@@ -160,7 +175,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 readOnly={landing}
               />
             </div>
-            {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && dashId !== LANDING && (
+            {mine && mine.last_event_day === null && !besides && dashId !== LANDING && (
               <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <span>No events received yet</span>
                 <Link to={settingsPath(id, 'overview', rangeSearch)} className="font-medium underline-offset-2 hover:underline">
@@ -182,6 +197,9 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
               ) : (
                 <FormPage key={params.name} project={project} name={params.name} />
               )
+            ) : dashId === ALERTS_ID ? (
+              // One alert's page comes with AlertPage; until then `/alerts/:alertId` shows the row alone.
+              params.alertId === undefined ? <AlertsList projectId={id} /> : null
             ) : tabsQ.error ? (
               <PageError error={tabsQ.error} onRetry={() => void tabsQ.refetch()} bare />
             ) : (

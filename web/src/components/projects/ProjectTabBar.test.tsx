@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
-import type { ProjectTab } from '@/lib/api'
+import { endpoints, type ProjectTab } from '@/lib/api'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
-import { FORMS_ID, SETTINGS_ID, type SettingsSection } from '@/lib/project-tabs'
+import { ALERTS_ID, FORMS_ID, SETTINGS_ID, type SettingsSection } from '@/lib/project-tabs'
+import { alert as alertOf } from '@/test/alerts'
+import { testClient } from '@/test/render'
 import ProjectTabBar from './ProjectTabBar'
 
 const tabs: ProjectTab[] = [
@@ -24,6 +27,8 @@ function renderBar({
   readOnly,
   section,
   archived,
+  alert,
+  path = '/projects/7/settings?range=30d',
   tabs: shown = tabs,
 }: {
   currentId: number
@@ -32,25 +37,30 @@ function renderBar({
   readOnly?: boolean
   section?: SettingsSection
   archived?: boolean
+  alert?: string
+  path?: string
   tabs?: ProjectTab[]
 }) {
   return render(
-    <MemoryRouter initialEntries={['/projects/7/settings?range=30d']}>
-      <TooltipProvider>
-        <ProjectTabBar
-          projectId={7}
-          currentId={currentId}
-          tabs={shown}
-          dashboards={[]}
-          actions={actions}
-          newSubmissions={newSubmissions}
-          draftForms={draftForms}
-          readOnly={readOnly}
-          section={section}
-          archived={archived}
-        />
-      </TooltipProvider>
-    </MemoryRouter>
+    <QueryClientProvider client={testClient()}>
+      <MemoryRouter initialEntries={[path]}>
+        <TooltipProvider>
+          <ProjectTabBar
+            projectId={7}
+            currentId={currentId}
+            tabs={shown}
+            dashboards={[]}
+            actions={actions}
+            newSubmissions={newSubmissions}
+            draftForms={draftForms}
+            readOnly={readOnly}
+            section={section}
+            archived={archived}
+            alert={alert}
+          />
+        </TooltipProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
@@ -60,6 +70,39 @@ describe('ProjectTabBar', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine'])
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
     expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('href', '/projects/7/forms?range=30d')
+  })
+
+  it('shows Alerts as a button before Forms, keeping the range', () => {
+    renderBar({ currentId: 1, newSubmissions: 0 })
+    const alerts = screen.getByRole('link', { name: 'Alerts' })
+    expect(alerts).toHaveAttribute('href', '/projects/7/alerts?range=30d')
+    expect(alerts).not.toHaveAttribute('aria-current')
+    expect(alerts.compareDocumentPosition(screen.getByRole('link', { name: 'Forms' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows neither Alerts nor Forms while the page lands', () => {
+    renderBar({ currentId: -2, newSubmissions: 0, readOnly: true })
+    expect(screen.queryByRole('link', { name: 'Alerts' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Forms' })).toBeNull()
+  })
+
+  it('marks the bell current on Alerts, with Live and Archived in place of the dashboards', () => {
+    renderBar({ currentId: ALERTS_ID, newSubmissions: 0, path: '/projects/7/alerts?range=30d' })
+    expect(screen.getByRole('link', { name: 'Alerts' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Forms' })).not.toHaveAttribute('aria-current')
+    expect(screen.getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current')
+    const lists = screen.getByRole('navigation', { name: 'Alert lists' })
+    expect(within(lists).getAllByRole('link').map((l) => l.textContent)).toEqual(['Live', 'Archived'])
+    expect(within(lists).getByRole('link', { name: 'Live' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
+  })
+
+  it("follows an alert's place in the live list on its page", async () => {
+    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alertOf({ id: 4 })] })
+    renderBar({ currentId: ALERTS_ID, newSubmissions: 0, alert: '12', path: '/projects/7/alerts/12' })
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Archived' })).toHaveAttribute('aria-current', 'page'))
+    expect(endpoints.alerts).toHaveBeenCalledWith(7, false)
   })
 
   it('remembers a tab as soon as it is chosen, before it loads', async () => {

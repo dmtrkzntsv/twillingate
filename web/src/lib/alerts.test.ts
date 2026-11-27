@@ -119,6 +119,12 @@ describe('describeCondition', () => {
       'no event for 1 hour',
     )
   })
+  it('says nothing for a broken alert, whose condition has no type the console knows', () => {
+    const broken = { type: '' } as unknown as AlertCondition
+    expect(describeCondition({ condition: broken, unit: '', window_days: 0 })).toBe('')
+    const unknown = { type: 'forecast' } as unknown as AlertCondition
+    expect(describeCondition({ condition: unknown, unit: 'count', window_days: 7 })).toBe('')
+  })
 })
 
 describe('describeSource', () => {

@@ -51,7 +51,7 @@ function thresholdText(unit: AlertUnit, value: number): string {
   return formatAlertValue(unit, value)
 }
 
-/** The line an alert watches, in words: `below 3% over 7 days`, `drops 30% against the 7 days before`, `no event for 6 hours`. */
+/** The line an alert watches, in words: `below 3% over 7 days`, `drops 30% against the 7 days before`, `no event for 6 hours`; empty for a condition of no known type (a broken alert's). */
 export function describeCondition(a: Pick<Alert, 'condition' | 'unit' | 'window_days'>): string {
   const c = a.condition
   const days = a.window_days
@@ -66,6 +66,8 @@ export function describeCondition(a: Pick<Alert, 'condition' | 'unit' | 'window_
     }
     case 'silence':
       return `no event for ${plural(c.hours, 'hour')}`
+    default:
+      return ''
   }
 }
 

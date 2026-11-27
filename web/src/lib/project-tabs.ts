@@ -6,6 +6,9 @@ export const SETTINGS_ID = 0
 /** The Forms page's id in the project's tab row: never a dashboard's (forms D12). */
 export const FORMS_ID = -1
 
+/** The Alerts page's id in the project's tab row: never a dashboard's, Forms' or Settings', nor the landing page's -2. */
+export const ALERTS_ID = -3
+
 /**
  * A project's Settings tabs, in order (project settings tabs), each at
  * `/settings/:section`; plain `/settings` shows the first. Overview took
@@ -38,14 +41,22 @@ export function settingsPath(projectId: number, section?: SettingsSection, searc
   return search ? `${path}?${search}` : path
 }
 
-/** Where a project's tab lives: Settings at `/settings`, Forms at `/forms`, a dashboard under `/dashboards/:id` (D8). */
+/** Where a project's tab lives: Settings at `/settings`, Forms at `/forms`, Alerts at `/alerts`, a dashboard under `/dashboards/:id` (D8). */
 export function tabPath(projectId: number, dashboardId: number, search = ''): string {
   const path =
     dashboardId === SETTINGS_ID
       ? `/projects/${projectId}/settings`
       : dashboardId === FORMS_ID
         ? `/projects/${projectId}/forms`
-        : `/projects/${projectId}/dashboards/${dashboardId}`
+        : dashboardId === ALERTS_ID
+          ? `/projects/${projectId}/alerts`
+          : `/projects/${projectId}/dashboards/${dashboardId}`
+  return search ? `${path}?${search}` : path
+}
+
+/** Where one of a project's alerts opens: `/alerts/:id`, live or archived. */
+export function alertPath(projectId: number, alertId: number, search = ''): string {
+  const path = `/projects/${projectId}/alerts/${alertId}`
   return search ? `${path}?${search}` : path
 }
 
