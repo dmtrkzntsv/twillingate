@@ -14,6 +14,10 @@ const project: Project = { project_id: 1, name: 'shop', allowed_origins: [] }
 beforeEach(() => {
   vi.restoreAllMocks()
   vi.mocked(toast).mockClear()
+  // The backtest (and a template alert's event list) read on their own: answered empty.
+  vi.spyOn(endpoints, 'previewAlert').mockResolvedValue({ days: [], gaps: [], fired: 0 })
+  vi.spyOn(endpoints, 'eventNames').mockResolvedValue({ events: [] })
+  vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC' } as Awaited<ReturnType<typeof endpoints.dashboards>>)
 })
 
 function renderPage(alertId: string) {

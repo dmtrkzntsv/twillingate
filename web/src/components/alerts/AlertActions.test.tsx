@@ -16,6 +16,8 @@ const DAY = 86_400_000
 beforeEach(() => {
   vi.restoreAllMocks()
   vi.mocked(toast).mockClear()
+  // The backtest reads on its own: answered empty.
+  vi.spyOn(endpoints, 'previewAlert').mockResolvedValue({ days: [], gaps: [], fired: 0 })
   vi.mocked(toast.error).mockClear()
 })
 

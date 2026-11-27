@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
@@ -8,13 +8,16 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAlertActions } from '@/hooks/use-alert-actions'
 import { useNow } from '@/hooks/use-now'
-import { stateLabel } from '@/lib/alerts'
+import { draftOf, type AlertDraft } from '@/lib/alert-draft'
+import { describeCondition, stateLabel } from '@/lib/alerts'
 import type { Alert, Project } from '@/lib/api'
 import { ALERTS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { alertsQuery } from '@/lib/queries'
 import { formatAgo } from '@/lib/units'
 import AlertActions from './AlertActions'
+import AlertBacktest from './AlertBacktest'
 import AlertDefinition from './AlertDefinition'
+import AlertEditor from './AlertEditor'
 import AlertStateBadge from './AlertStateBadge'
 
 /** How often the alert lists are read while the alert's check is pending: the runner serves one within a minute. */
@@ -34,6 +37,18 @@ function facts(a: Alert, now: number): string {
   if (a.kind !== 'silence' && a.last_day && a.window_days >= 1) parts.push(`days ${firstDay(a.last_day, a.window_days)} to ${a.last_day}`)
   if (a.archived_at) parts.push(`Archived ${a.archived_at.slice(0, 10)}`)
   return parts.join(' · ')
+}
+
+/** An archived alert's settings, read-only: when it fired and the minimum volume it judged by. Restore makes them editable again. */
+function ArchivedSettings({ alert }: { alert: Alert }) {
+  const condition = describeCondition(alert)
+  return (
+    <section aria-label="Alert settings" className="flex min-w-0 flex-col gap-2">
+      <h3 className="text-base font-semibold">Alert settings</h3>
+      {condition && <p className="text-sm break-words">{condition}</p>}
+      {alert.min_volume > 0 && <p className="text-sm text-muted-foreground">{`Minimum volume ${alert.min_volume}`}</p>}
+    </section>
+  )
 }
 
 /**
@@ -89,6 +104,10 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
   const archived = useQuery({ ...alertsQuery(projectId, true), enabled: lookArchived, refetchInterval: pollWhilePending(id) })
   const alert = inLive ?? (lookArchived ? archived.data?.alerts.find((a) => a.id === id) : undefined)
   useCheckedToast(alert, actions.asked, actions.forget)
+  // The inputs the editor touched, on the alert they were touched on; the
+  // rest follow the saved alert, so a refetch that brings another edit
+  // shows it rather than a save sending the old value back.
+  const [edits, setEdits] = useState<{ id: number; touched: Partial<AlertDraft> } | null>(null)
 
   if (!alert) {
     if (valid && live.error && !live.data) return <LoadError what="the alert" error={live.error} onRetry={() => void live.refetch()} />
@@ -111,6 +130,8 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
     )
   }
 
+  const draft = { ...draftOf(alert), ...(edits?.id === alert.id ? edits.touched : {}) }
+  const isArchived = alert.archived_at !== ''
   const showReason = (alert.state === 'broken' || alert.state === 'no_data') && alert.reason
   return (
     <div className="grid max-w-4xl min-w-0 grid-cols-1 gap-4">
@@ -130,8 +151,20 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
       </p>
       <AlertActions alert={alert} actions={actions} />
       <AlertDefinition alert={alert} />
-      {/* The editor slot: AlertEditor, Alert settings. */}
-      {/* The backtest slot: AlertBacktest. */}
+      {isArchived ? (
+        <ArchivedSettings alert={alert} />
+      ) : (
+        <AlertEditor
+          key={alert.id}
+          projectId={projectId}
+          alert={alert}
+          actions={actions}
+          draft={draft}
+          onEdit={(patch) => setEdits((e) => ({ id: alert.id, touched: { ...(e?.id === alert.id ? e.touched : {}), ...patch } }))}
+          onReset={() => setEdits(null)}
+        />
+      )}
+      {!isArchived && alert.kind !== '' && <AlertBacktest projectId={projectId} alert={alert} draft={draft} />}
       {/* The history slot: AlertHistory. */}
     </div>
   )
