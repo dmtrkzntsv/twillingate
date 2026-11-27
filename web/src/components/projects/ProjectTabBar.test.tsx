@@ -98,11 +98,15 @@ describe('ProjectTabBar', () => {
     expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
   })
 
-  it("follows an alert's place in the live list on its page", async () => {
-    vi.spyOn(endpoints, 'alerts').mockResolvedValue({ max_live: 50, alerts: [alertOf({ id: 4 })] })
+  it("follows an alert's place in the lists on its page", async () => {
+    vi.spyOn(endpoints, 'alerts').mockImplementation(async (_p, archived) => ({
+      max_live: 50,
+      alerts: archived ? [alertOf({ id: 12, archived_at: '2026-11-20T00:00:00Z' })] : [alertOf({ id: 4 })],
+    }))
     renderBar({ currentId: ALERTS_ID, newSubmissions: 0, alert: '12', path: '/projects/7/alerts/12' })
     await waitFor(() => expect(screen.getByRole('link', { name: 'Archived' })).toHaveAttribute('aria-current', 'page'))
     expect(endpoints.alerts).toHaveBeenCalledWith(7, false)
+    expect(endpoints.alerts).toHaveBeenCalledWith(7, true)
   })
 
   it('remembers a tab as soon as it is chosen, before it loads', async () => {
