@@ -625,10 +625,22 @@ test("the New alert wizard's three steps fit a phone", async ({ page, request })
     await dialog.getByRole('button', { name: 'Next' }).click()
     await expect(dialog.getByText('Step 3 of 3')).toBeVisible()
     await expect(dialog.getByText(/^Would (not )?have fired/)).toBeVisible({ timeout: 30_000 })
-    // A name as long as a name may be, to catch a line that will not wrap.
-    await dialog.getByLabel('Name', { exact: true }).fill(('Wizard ' + 'a name that goes on and on '.repeat(4)).slice(0, 100).replace(/ $/, 'x'))
     await expect.poll(() => dialogOverflow(page), { message: 'step 3' }).toEqual([])
     expect(await sidewaysScroll(page), 'step 3').toEqual([])
+
+    // A name already taken, as long as a name may be and one unbroken word: the
+    // server's refusal under Name quotes it, a line that fits only by breaking inside it.
+    const taken = `wizard_${Date.now()}_${'a_snake_case_name_that_goes_on_'.repeat(4)}`.slice(0, 100)
+    const made = await request.post(`/api/projects/${id}/alerts`, {
+      headers: authHeaders(),
+      data: { name: taken, template: 'event_count', fields: { event: '$page_view' }, condition: { type: 'threshold', op: 'below', value: 1 }, window_days: 1 },
+    })
+    expect(made.ok(), await made.text()).toBeTruthy()
+    await dialog.getByLabel('Name', { exact: true }).fill(taken)
+    await dialog.getByRole('button', { name: 'Create alert' }).click()
+    await expect(dialog.getByText(/already has a live alert named/)).toBeVisible()
+    await expect.poll(() => dialogOverflow(page), { message: 'step 3, a long name refused' }).toEqual([])
+    expect(await sidewaysScroll(page), 'step 3, a long name refused').toEqual([])
   } finally {
     await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
   }
