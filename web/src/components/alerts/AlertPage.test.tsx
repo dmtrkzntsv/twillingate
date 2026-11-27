@@ -93,6 +93,16 @@ describe('AlertPage', () => {
     expect(facts()).not.toHaveTextContent(/days .+ to /)
   })
 
+  it('shows a broken alert made from a template as broken, with its stored query, not the template line', async () => {
+    const query = { type: 'stat', event: 'checkout', metric: 'count' }
+    serveAlerts([brokenAlert({ id: 9, query, template: 'event_count', fields: { event: 'checkout' } })])
+    renderPage('9')
+    const watches = await screen.findByRole('region', { name: 'Watches' })
+    expect(within(watches).getByText('A definition that no longer holds')).toBeInTheDocument()
+    expect(within(watches).queryByText('Count of checkout')).toBeNull()
+    expect(watches.querySelector('pre')?.textContent).toBe(JSON.stringify(query, null, 2))
+  })
+
   it("shows a broken alert's history, with the error that broke it", async () => {
     serveAlerts([brokenAlert({ id: 9 })])
     const history = vi.spyOn(endpoints, 'alertHistory').mockResolvedValue({

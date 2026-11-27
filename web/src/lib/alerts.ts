@@ -97,8 +97,9 @@ function describeTemplate(template: NonNullable<Alert['template']>, f: Record<st
   }
 }
 
-/** What an alert watches, in words. */
+/** What an alert watches, in words; a broken alert's definition no longer holds, whatever template made it. */
 export function describeSource(a: Alert): string {
+  if (a.kind === '') return 'A definition that no longer holds'
   if (a.template) return describeTemplate(a.template, a.fields ?? {})
   switch (a.kind) {
     case 'funnel':

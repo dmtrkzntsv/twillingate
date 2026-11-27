@@ -165,6 +165,7 @@ describe('describeSource', () => {
     expect(describeSource(alert({ kind: 'silence', where: [] }))).toBe('Every event')
     expect(describeSource(alert({ kind: 'silence' }))).toBe('Every event')
     expect(describeSource(alert({ kind: '', unit: '' }))).toBe('A definition that no longer holds')
+    expect(describeSource(alert({ kind: '', unit: '', template: 'event_count', fields: { event: 'checkout' } }))).toBe('A definition that no longer holds')
   })
 })
 
