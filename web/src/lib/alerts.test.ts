@@ -144,6 +144,12 @@ describe('describeSource', () => {
     expect(tpl('conversion', { from_event: 'a', to_event: 'b', people: 'user' })).toBe(
       'Conversion from a to b (signed-in users)',
     )
+    expect(tpl('conversion', { from_event: '$page_view', from_path: '/a', to_event: 'signup', to_path: '/b' })).toBe(
+      'Conversion from $page_view on /a to signup on /b',
+    )
+    expect(tpl('conversion', { from_event: '$form_submit', from_path: '/contact', to_event: 'paid' })).toBe(
+      'Conversion from $form_submit on /contact to paid',
+    )
     expect(tpl('no_events', { event: 'heartbeat' })).toBe('Events named heartbeat')
     expect(tpl('no_events', { event: '$page_view', path: '/x' })).toBe('Events named $page_view on /x')
   })
@@ -155,8 +161,8 @@ describe('describeSource', () => {
     expect(describeSource(alert({ read: { metric: 'bounce_rate' } }))).toBe('bounce_rate of a stat query')
     expect(describeSource(alert({ kind: 'silence', where: [{}, {}] }))).toBe('Events matching 2 filters')
     expect(describeSource(alert({ kind: 'silence', where: [{}] }))).toBe('Events matching 1 filter')
-    expect(describeSource(alert({ kind: 'silence', where: [] }))).toBe('every event')
-    expect(describeSource(alert({ kind: 'silence' }))).toBe('every event')
+    expect(describeSource(alert({ kind: 'silence', where: [] }))).toBe('Every event')
+    expect(describeSource(alert({ kind: 'silence' }))).toBe('Every event')
     expect(describeSource(alert({ kind: '', unit: '' }))).toBe('A definition that no longer holds')
   })
 })
@@ -215,6 +221,14 @@ describe('breachedSince', () => {
     expect(breachedSince(alert({ state: 'breached', recent }))).toBe('t3')
     const carried = [r('t3', 'broken'), r('t2', 'error'), r('t1', 'breached'), r('t0', 'ok')]
     expect(breachedSince(alert({ state: 'breached', recent: carried }))).toBe('t1')
+  })
+  it('is null when the run fills a full recent with no ok before it, since the breach began earlier', () => {
+    const full = Array.from({ length: 14 }, (_, i) => r(`t${13 - i}`, i % 3 === 1 ? 'no_data' : 'breached'))
+    expect(breachedSince(alert({ state: 'breached', recent: full }))).toBeNull()
+    // A short recent is every evaluation there is: the run's oldest is when it began.
+    expect(breachedSince(alert({ state: 'breached', recent: full.slice(0, 13) }))).toBe('t1')
+    // An ok as the 14th ends the run inside recent.
+    expect(breachedSince(alert({ state: 'breached', recent: [...full.slice(0, 13), r('t0', 'ok')] }))).toBe('t1')
   })
   it('is null unless breached', () => {
     expect(breachedSince(alert({ state: 'ok', recent: [r('t1', 'breached')] }))).toBeNull()

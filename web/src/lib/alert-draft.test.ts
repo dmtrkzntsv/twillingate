@@ -81,6 +81,32 @@ describe('patchOf', () => {
     expect(patchOf(a, { ...d, fields: { event: '', who: '' } })).toEqual({ fields: {} })
   })
 
+  it("counts a template's default chosen explicitly as no change, and sends it as absent", () => {
+    const visitors = alert({ template: 'unique_people', fields: { event: 'signup' } })
+    const v = draftOf(visitors)
+    expect(patchOf(visitors, { ...v, fields: { ...v.fields, who: 'actors' } })).toEqual({})
+    expect(definitionChanged(visitors, { ...v, fields: { ...v.fields, who: 'actors' } })).toBe(false)
+    const conv = alert({ template: 'conversion', kind: 'funnel', fields: { from_event: 'visit', to_event: 'signup' } })
+    const c = draftOf(conv)
+    expect(patchOf(conv, { ...c, fields: { ...c.fields, people: 'actor' } })).toEqual({})
+    // Another field changed beside it: the default stays out of what is sent.
+    expect(patchOf(conv, { ...c, fields: { ...c.fields, people: 'actor', to_event: 'paid' } })).toEqual({ fields: { from_event: 'visit', to_event: 'paid' } })
+  })
+
+  it('sends a field changed back to its default as absent', () => {
+    const a = alert({ template: 'unique_people', fields: { event: 'signup', who: 'users' } })
+    const d = draftOf(a)
+    expect(patchOf(a, { ...d, fields: { ...d.fields, who: 'actors' } })).toEqual({ fields: { event: 'signup' } })
+  })
+
+  it('keeps a default the saved alert names, when another field changes', () => {
+    const a = alert({ template: 'unique_people', fields: { event: 'signup', who: 'actors' } })
+    const d = draftOf(a)
+    expect(patchOf(a, { ...d, fields: { ...d.fields, event: 'paid' } })).toEqual({ fields: { event: 'paid', who: 'actors' } })
+    // Dropping it (the people select never empties it, but the draft may) means the same alert.
+    expect(patchOf(a, { ...d, fields: { event: 'signup' } })).toEqual({})
+  })
+
   it("sends a silence alert's hours, without a window or a minimum volume", () => {
     const a = alert({ kind: 'silence', unit: 'hours', condition: { type: 'silence', hours: 6 }, window_days: 1 })
     expect(patchOf(a, { ...draftOf(a), hours: '12', windowDays: '3', minVolume: '5' })).toEqual({ condition: { type: 'silence', hours: 12 } })

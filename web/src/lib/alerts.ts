@@ -71,6 +71,12 @@ export function describeCondition(a: Pick<Alert, 'condition' | 'unit' | 'window_
   }
 }
 
+/** The value a template's field takes when it is absent (docs/twillingate.md, Templates): the people a template counts. */
+export const TEMPLATE_DEFAULTS: Partial<Record<NonNullable<Alert['template']>, Record<string, string>>> = {
+  unique_people: { who: 'actors' },
+  conversion: { people: 'actor' },
+}
+
 /** What a template alert watches, from its fields. */
 function describeTemplate(template: NonNullable<Alert['template']>, f: Record<string, string>): string {
   const onPath = f.path ? ` on ${f.path}` : ''
@@ -81,8 +87,11 @@ function describeTemplate(template: NonNullable<Alert['template']>, f: Record<st
       const who = f.who === 'users' ? 'Signed-in users' : 'Visitors'
       return f.event ? `${who} doing ${f.event}` : who
     }
-    case 'conversion':
-      return `Conversion from ${f.from_event} to ${f.to_event}${f.people === 'user' ? ' (signed-in users)' : ''}`
+    case 'conversion': {
+      const from = f.from_path ? `${f.from_event} on ${f.from_path}` : f.from_event
+      const to = f.to_path ? `${f.to_event} on ${f.to_path}` : f.to_event
+      return `Conversion from ${from} to ${to}${f.people === 'user' ? ' (signed-in users)' : ''}`
+    }
     case 'no_events':
       return `Events named ${f.event}${onPath}`
   }
@@ -98,7 +107,7 @@ export function describeSource(a: Alert): string {
       return `${a.read.metric} of a stat query`
     case 'silence': {
       const n = a.where?.length ?? 0
-      return n === 0 ? 'every event' : `Events matching ${plural(n, 'filter')}`
+      return n === 0 ? 'Every event' : `Events matching ${plural(n, 'filter')}`
     }
     default:
       return 'A definition that no longer holds'
@@ -126,15 +135,18 @@ export function conditionTypes(kind: string): AlertCondition['type'][] {
   return []
 }
 
-/** When a breached alert's current breach began: the oldest evaluation of the newest run of breached in `recent` (newest first). An evaluation with no data, a failed one and a broken one neither end the run nor extend it; an ok one ends it. Null when the alert is not breached. */
+/** The evaluations `recent` holds at most (list_alerts' 14). */
+const RECENT_LIMIT = 14
+
+/** When a breached alert's current breach began: the oldest evaluation of the newest run of breached in `recent` (newest first). An evaluation with no data, a failed one and a broken one neither end the run nor extend it; an ok one ends it. Null when the alert is not breached, and when the run fills a full `recent` with no ok before it (the breach began earlier than `recent` reaches). */
 export function breachedSince(a: Alert): string | null {
   if (a.state !== 'breached') return null
   let since: string | null = null
   for (const e of a.recent) {
     if (e.outcome === 'breached') since = e.at
-    else if (e.outcome === 'ok') break
+    else if (e.outcome === 'ok') return since
   }
-  return since
+  return a.recent.length >= RECENT_LIMIT ? null : since
 }
 
 const SNOOZE_MS = { '1h': 3_600_000, '1d': 86_400_000, '1w': 7 * 86_400_000 }

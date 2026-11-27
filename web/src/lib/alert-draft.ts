@@ -1,7 +1,7 @@
 // The alert editor's draft: what its inputs hold, as text, and what a save
 // or a backtest of it sends (docs/twillingate.md, Alerts: update_alert and
 // preview_alert). Pure, so the rules are tested apart from the form.
-import { alertSource, conditionTypes, inputToThreshold, takesMinVolume, thresholdToInput } from './alerts'
+import { alertSource, conditionTypes, inputToThreshold, takesMinVolume, TEMPLATE_DEFAULTS, thresholdToInput } from './alerts'
 import type { Alert, AlertCondition, AlertPatch, AlertSource } from './api'
 
 /** The editor's inputs: every condition type's, so switching type and back keeps what was typed. */
@@ -43,11 +43,26 @@ function cleanFields(fields: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== ''))
 }
 
-function sameFields(a: Record<string, string>, b: Record<string, string>): boolean {
-  const x = cleanFields(a)
-  const y = cleanFields(b)
+type Template = NonNullable<Alert['template']>
+
+/** A template's fields as the server reads them: empty ones absent, and each absent one that has a default holding it (`who: actors`). */
+function effectiveFields(template: Template, fields: Record<string, string>): Record<string, string> {
+  return { ...TEMPLATE_DEFAULTS[template], ...cleanFields(fields) }
+}
+
+/** Whether two sets of a template's fields mean the same alert, the template's defaults applied to both. */
+function sameFields(template: Template, a: Record<string, string>, b: Record<string, string>): boolean {
+  const x = effectiveFields(template, a)
+  const y = effectiveFields(template, b)
   const keys = Object.keys(x)
   return keys.length === Object.keys(y).length && keys.every((k) => x[k] === y[k])
+}
+
+/** The draft's fields as a save or a preview sends them: empty ones dropped, and one that holds its default dropped too, unless the saved alert names it so (left as it was). */
+function sentFields(template: Template, fields: Record<string, string>, saved: Record<string, string>): Record<string, string> {
+  const out = cleanFields(fields)
+  for (const [k, v] of Object.entries(TEMPLATE_DEFAULTS[template] ?? {})) if (out[k] === v && saved[k] !== v) delete out[k]
+  return out
 }
 
 /** The draft of a saved alert; a condition type it lacks starts from the defaults (below, drops 30% against the days before). */
@@ -151,7 +166,7 @@ export function patchOf(a: Alert, d: AlertDraft): AlertPatch {
     // A condition that takes none (a stat's change turned threshold, with no volume read): the server refuses the one kept.
     patch.min_volume = 0
   }
-  if (a.template && !sameFields(d.fields, a.fields ?? {})) patch.fields = cleanFields(d.fields)
+  if (a.template && !sameFields(a.template, d.fields, a.fields ?? {})) patch.fields = sentFields(a.template, d.fields, a.fields ?? {})
   return patch
 }
 
@@ -162,9 +177,9 @@ export function definitionChanged(a: Alert, d: AlertDraft): boolean {
 
 /** preview_alert's body for the draft: the alert's one source (a template's with the draft's fields), the draft's condition, its window and, where taken, its minimum volume. */
 export function previewBody(a: Alert, d: AlertDraft): AlertSource & { condition: AlertCondition; window_days?: number; min_volume?: number } {
-  const source = alertSource(a)
-  const body: AlertSource & { condition: AlertCondition; window_days?: number; min_volume?: number } =
-    'template' in source ? { template: source.template, fields: cleanFields(d.fields), condition: conditionOf(a, d) } : { ...source, condition: conditionOf(a, d) }
+  const body: AlertSource & { condition: AlertCondition; window_days?: number; min_volume?: number } = a.template
+    ? { template: a.template, fields: sentFields(a.template, d.fields, a.fields ?? {}), condition: conditionOf(a, d) }
+    : { ...alertSource(a), condition: conditionOf(a, d) }
   if (hasWindow(d)) body.window_days = num(d.windowDays)
   if (draftTakesMinVolume(a, d)) body.min_volume = num(d.minVolume)
   return body

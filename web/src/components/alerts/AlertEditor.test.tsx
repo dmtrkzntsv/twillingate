@@ -209,7 +209,42 @@ describe('TemplateFields', () => {
     expect(f.getByLabelText('From event')).toHaveValue('$page_view')
     expect(f.getByLabelText('From page path')).toBeInTheDocument()
     expect(f.getByLabelText('To event')).toHaveValue('signup')
-    expect(f.queryByLabelText('To page path')).toBeNull()
+    expect(f.getByLabelText('To page path')).toHaveValue('')
     expect(f.getByLabelText('People')).toHaveValue('actor')
+  })
+
+  it("offers a conversion step's path on any event, and keeps it when the event changes", async () => {
+    const a = alert({
+      id: 7,
+      kind: 'funnel',
+      unit: 'fraction',
+      template: 'conversion',
+      fields: { from_event: '$form_submit', from_path: '/contact', to_event: 'signup' },
+    })
+    serveAlerts([a])
+    const update = vi.spyOn(endpoints, 'updateAlert').mockResolvedValue(a)
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    expect(f.getByLabelText('From event')).toHaveValue('$form_submit')
+    expect(f.getByLabelText('From page path')).toHaveValue('/contact')
+    expect(screen.getByText('Conversion from $form_submit on /contact to signup')).toBeInTheDocument()
+    await vi.waitFor(() => expect(within(f.getByLabelText('From event')).getByRole('option', { name: 'paid' })).toBeInTheDocument())
+    await user.selectOptions(f.getByLabelText('From event'), 'paid')
+    expect(f.getByLabelText('From page path')).toHaveValue('/contact')
+    await user.type(f.getByLabelText('To page path'), '/welcome')
+    await user.click(f.getByRole('button', { name: 'Save' }))
+    expect(update).toHaveBeenCalledWith(1, 7, { fields: { from_event: 'paid', from_path: '/contact', to_event: 'signup', to_path: '/welcome' } })
+  })
+
+  it('keeps Save disabled when the people chosen are the default the alert already counts', async () => {
+    serveAlerts([alert({ id: 7, template: 'unique_people', fields: { event: 'signup' } })])
+    const user = userEvent.setup()
+    renderPage()
+    const f = await form()
+    await user.selectOptions(f.getByLabelText('Who'), 'users')
+    expect(f.getByRole('button', { name: 'Save' })).toBeEnabled()
+    await user.selectOptions(f.getByLabelText('Who'), 'actors')
+    expect(f.getByRole('button', { name: 'Save' })).toBeDisabled()
   })
 })
