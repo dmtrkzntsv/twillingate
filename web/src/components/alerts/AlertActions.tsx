@@ -15,12 +15,13 @@ const SNOOZES = [
 /**
  * What can be done to an alert, in a row that wraps: **Check now**
  * (`Checking…` while a check is pending; kept from a paused or snoozed
- * alert, which the server would refuse, with a tooltip saying why),
+ * alert, or one of an archived project, which the server would refuse,
+ * with a tooltip saying why),
  * **Pause** or **Resume**, a **Snooze** menu (not while paused) or **Wake**
  * while snoozed, and **Archive**. An archived alert has only **Restore**.
  * Archive and Restore ask nothing first: each undoes the other.
  */
-export default function AlertActions({ alert, actions }: { alert: Alert; actions: Actions }) {
+export default function AlertActions({ alert, actions, projectArchived = false }: { alert: Alert; actions: Actions; projectArchived?: boolean }) {
   const { id } = alert
   if (alert.archived_at !== '') {
     return (
@@ -32,7 +33,7 @@ export default function AlertActions({ alert, actions }: { alert: Alert; actions
       </div>
     )
   }
-  const blocked = checkBlocked(alert)
+  const blocked = checkBlocked(alert, projectArchived)
   const checking = alert.check_pending
   const idle = blocked !== null || checking || actions.pending
   const check = (

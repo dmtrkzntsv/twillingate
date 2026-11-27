@@ -158,7 +158,7 @@ export default function AlertPage({ project, alertId }: { project: Project; aler
       <p data-testid="alert-facts" className="text-sm break-words text-muted-foreground">
         {facts(alert, now)}
       </p>
-      <AlertActions alert={alert} actions={actions} />
+      <AlertActions alert={alert} actions={actions} projectArchived={Boolean(project.archived)} />
       <AlertDefinition alert={alert} />
       {isArchived ? (
         <ArchivedSettings alert={alert} />

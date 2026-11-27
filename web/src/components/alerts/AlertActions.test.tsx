@@ -59,6 +59,23 @@ describe('AlertActions', () => {
     expect(check).not.toHaveBeenCalled()
   })
 
+  it("keeps Check now from an archived project's alert, saying why", async () => {
+    serveOne(alert({ id: 7 }))
+    const check = vi.spyOn(endpoints, 'checkAlert')
+    const user = userEvent.setup()
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/1/alerts/7']}>
+        <AlertPage project={{ ...project, archived: true, archived_at: '2026-11-20T10:00:00Z' }} alertId="7" />
+      </MemoryRouter>
+    )
+    const button = await screen.findByRole('button', { name: 'Check now' })
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    await user.hover(button)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Alerts of an archived project are not checked')
+    await user.click(button)
+    expect(check).not.toHaveBeenCalled()
+  })
+
   it('offers Resume and Wake, and no Snooze, on a paused or a snoozed alert', async () => {
     serveOne(alert({ id: 7, paused: true, state: 'paused' }))
     const { unmount } = renderPage()

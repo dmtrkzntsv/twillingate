@@ -265,6 +265,9 @@ describe('checkBlocked', () => {
     expect(checkBlocked(alert({ archived_at: '2026-11-20T10:00:00Z', paused: true }))).toBe('Archived alerts are not checked')
     expect(checkBlocked(alert({ paused: true, state: 'paused', snoozed_until: '2026-12-01T00:00:00Z' }))).toBe('Paused alerts are not checked')
     expect(checkBlocked(alert({ state: 'snoozed', snoozed_until: '2026-12-01T00:00:00Z' }))).toBe('Snoozed alerts are not checked')
+    expect(checkBlocked(alert({ paused: true, state: 'paused' }), true)).toBe('Alerts of an archived project are not checked')
+    expect(checkBlocked(alert({ archived_at: '2026-11-20T10:00:00Z' }), true)).toBe('Archived alerts are not checked')
+    expect(checkBlocked(alert({ state: 'breached' }), false)).toBeNull()
   })
   it('is null for an alert that may be checked', () => {
     expect(checkBlocked(alert({ state: 'breached' }))).toBeNull()

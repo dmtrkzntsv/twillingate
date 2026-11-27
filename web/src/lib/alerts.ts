@@ -172,9 +172,10 @@ export function stateLabel(state: AlertState): string {
   return STATE_LABELS[state] ?? String(state)
 }
 
-/** Why the server refuses to check an alert now (archived, paused or snoozed, in that order); null when it may be checked. */
-export function checkBlocked(a: Pick<Alert, 'archived_at' | 'paused' | 'state'>): string | null {
+/** Why the server refuses to check an alert now (archived, of an archived project, paused or snoozed, in that order); null when it may be checked. */
+export function checkBlocked(a: Pick<Alert, 'archived_at' | 'paused' | 'state'>, projectArchived = false): string | null {
   if (a.archived_at !== '') return 'Archived alerts are not checked'
+  if (projectArchived) return 'Alerts of an archived project are not checked'
   if (a.paused) return 'Paused alerts are not checked'
   if (a.state === 'snoozed') return 'Snoozed alerts are not checked'
   return null
