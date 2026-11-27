@@ -1184,7 +1184,14 @@ An alert watches one number of a project and notifies (the inbox and
 `NOTIFY_URL`, as [Notifications](#notifications) says) when it crosses a
 line: signups below 5 a day, a conversion dropping 30% against the week
 before, no heartbeat event for 6 hours. Alerts are made and read over MCP and
-the REST routes below; the console's Alerts tab comes later.
+the REST routes below.
+
+The console's Alerts tab (`/app/projects/{project_id}/alerts`, the bell in a
+project's tab row) lists a project's alerts with their last value, recent
+evaluations and state; an alert's page edits its name, condition, window,
+minimum volume and template fields, pauses, snoozes, archives and restores it,
+backtests a change before it is saved, shows its history, and asks for a check.
+Alerts are created by an agent for now.
 
 **What it watches.** A `stat` or a `funnel` of the [structured
 query](#structured-queries) language, and a `read` naming its one number. A
